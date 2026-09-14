@@ -1042,6 +1042,10 @@ def run_training(a, stage):
     step = start_step
     t0 = time.time()
     run_ctc, run_bnd, run_verify, nb = 0.0, 0.0, 0.0, 0
+    bnd_n, verify_n = 0, 0  # count only steps with REAL supervision for
+    # each term, so the printed average isn't diluted toward 0 by the
+    # (common, at low local_ratio) steps whose loss is the DDP-safe
+    # disconnected-zero stand-in from boundary_loss/the verify branch.
     deadline = t0 + a.max_hours_wall * 3600 if a.max_hours_wall else None
 
     for batch in batcher:
@@ -1083,10 +1087,14 @@ def run_training(a, stage):
             out = model(x, chunk=chunk, left_chunks=left)
             lc = ctc_loss(out["logits"], b["lens"], b["seq"], b["slens"])
             lb = torch.zeros((), device=device)
+            has_bnd = bool(bnd_mask.sum().item() > 0)
             if not a.no_boundary and out.get("boundary") is not None:
                 lb = boundary_loss(out["boundary"], b["bnd"].to(device),
                                    bnd_mask.to(device), a.pos_weight)
+            else:
+                has_bnd = False
             lv = torch.zeros((), device=device)
+            has_verify = bool(verify_head is not None and b["verify_present"])
             if verify_head is not None and not b["verify_present"]:
                 # Same DDP bookkeeping issue as boundary_loss's
                 # mask.sum()==0 case: verify_head's own parameters
@@ -1165,31 +1173,64 @@ def run_training(a, stage):
         run_ctc += lc.item()
         run_bnd += float(lb.detach())
         run_verify += float(lv.detach())
+        bnd_n += int(has_bnd)
+        verify_n += int(has_verify)
         nb += 1
         step += 1
 
-        if step % a.log_every == 0 and is_main:
-            # Logged/printed values are rank 0's OWN local losses, not
-            # averaged across ranks -- standard DDP practice (only
-            # gradients are synced; per-rank loss values are a fine,
-            # cheap proxy for "how is training going" without adding
-            # another collective call just for logging).
-            el = time.time() - t0
-            steps_per_s = (step - start_step) / max(el, 1)
-            print(f"step {step:7d}/{a.total_steps}  "
-                  f"ctc {run_ctc/max(nb,1):7.4f}  "
-                  f"bnd {run_bnd/max(nb,1):7.4f}  "
-                  f"verify {run_verify/max(nb,1):7.4f}  lr {lr:.2e}  "
-                  f"{el/60:6.1f}m  {steps_per_s:.2f} steps/s",
-                  flush=True)
-            _append_jsonl(log_path, {
-                "type": "train", "step": step, "total_steps": a.total_steps,
-                "ctc": run_ctc / max(nb, 1), "bnd": run_bnd / max(nb, 1),
-                "verify": run_verify / max(nb, 1), "lr": lr,
-                "elapsed_min": el / 60, "steps_per_s": steps_per_s,
-            })
+        if step % a.log_every == 0:
+            # bnd/verify are averaged over supervised steps ONLY
+            # (bnd_n/verify_n), not over every logged step (nb).
+            # boundary_loss returns an exact 0.0 stand-in on steps with
+            # no local item in the batch (required for DDP's fixed
+            # reduction plan -- see boundary_loss's own comment), and at
+            # local_ratio=0.15 most steps ARE that case. Dividing by nb
+            # instead of bnd_n silently mixes "how well is the boundary
+            # head doing" with "what fraction of this window's steps
+            # happened to have local supervision" into one number --
+            # whichever 5-step window got lucky/unlucky on supervised
+            # batches swings the printed value around in a way that
+            # looks like a training trend but is mostly which steps
+            # landed in which window. Same reasoning applies to verify.
+            if is_ddp:
+                # Collective call -- must run on EVERY rank, not just
+                # is_main, or ranks that skip it hang waiting for a
+                # partner. Also fixes logging being rank 0's own local
+                # (post-sharding) slice of the small local-item pool
+                # rather than the true global mean.
+                stats = torch.tensor(
+                    [run_ctc, run_bnd, run_verify, float(nb),
+                     float(bnd_n), float(verify_n)], device=device)
+                dist.all_reduce(stats, op=dist.ReduceOp.SUM)
+                g_ctc, g_bnd, g_verify, g_nb, g_bnd_n, g_verify_n = \
+                    stats.tolist()
+            else:
+                g_ctc, g_bnd, g_verify, g_nb, g_bnd_n, g_verify_n = (
+                    run_ctc, run_bnd, run_verify, float(nb),
+                    float(bnd_n), float(verify_n))
+            if is_main:
+                el = time.time() - t0
+                steps_per_s = (step - start_step) / max(el, 1)
+                print(f"step {step:7d}/{a.total_steps}  "
+                      f"ctc {g_ctc/max(g_nb,1):7.4f}  "
+                      f"bnd {g_bnd/max(g_bnd_n,1):7.4f}  "
+                      f"verify {g_verify/max(g_verify_n,1):7.4f}  "
+                      f"lr {lr:.2e}  "
+                      f"{el/60:6.1f}m  {steps_per_s:.2f} steps/s",
+                      flush=True)
+                _append_jsonl(log_path, {
+                    "type": "train", "step": step,
+                    "total_steps": a.total_steps,
+                    "ctc": g_ctc / max(g_nb, 1),
+                    "bnd": g_bnd / max(g_bnd_n, 1),
+                    "verify": g_verify / max(g_verify_n, 1),
+                    "bnd_n": g_bnd_n, "verify_n": g_verify_n,
+                    "lr": lr, "elapsed_min": el / 60,
+                    "steps_per_s": steps_per_s,
+                })
         if step % a.log_every == 0:
             run_ctc, run_bnd, run_verify, nb = 0.0, 0.0, 0.0, 0
+            bnd_n, verify_n = 0, 0
 
         if step % a.ckpt_every == 0:
             best_val = _checkpoint(a, stage, out_dir, resume_path,
