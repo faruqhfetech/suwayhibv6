@@ -134,6 +134,7 @@ from ..core import model as M
 from ..core import phones as P
 from ..core import reftext as RT
 from ..pipeline import extract as E
+from . import phase2 as PH2
 
 SR = 16000
 FRAMES_PER_SEC = 50
@@ -213,8 +214,22 @@ def stream_hf(dataset, split, label_col="phoneme_mis", max_hours=None,
         if budget and total + dur > budget:
             return
         total += dur
-        yield {"audio": wav, "phones": lab.split(), "ends": None,
-               "source": dataset}
+        item = {"audio": wav, "phones": lab.split(), "ends": None,
+                "source": dataset}
+        # Phase 2 (train/phase2.py) supervision: phoneme_ref is the
+        # CANONICAL target regardless of which column trains the CTC
+        # head above. Where it equals the CTC target, this audio
+        # genuinely supports it (verify_label=1). Where it differs
+        # (Iqra_TTS's deliberate mispronunciations, and real errors in
+        # Iqra_Extra_IS26), the audio does NOT genuinely support the
+        # canonical sequence it deviates from (verify_label=0) -- a
+        # free negative example for the SAME accept/reject question
+        # decode.py asks at inference, requiring no extra data.
+        ref = r.get("phoneme_ref")
+        if ref:
+            item["verify_phones"] = ref.split()
+            item["verify_label"] = 0 if ref != lab else 1
+        yield item
 
 
 def stream_local(manifest, lib, text_path, audio_cache=None, max_items=None):
@@ -253,8 +268,13 @@ def stream_local(manifest, lib, text_path, audio_cache=None, max_items=None):
         wav = (cache.ayah(path) if cache
                else B.decode(Path(lib) / path))
         n += 1
+        # Professional reciters, verified word segments: this audio
+        # always genuinely supports its own canonical G2P sequence, so
+        # it is a (less informative but free) verify_label=1 example --
+        # see stream_hf's comment for what these fields feed into.
         yield {"audio": wav, "phones": phones, "ends": ends,
-               "source": f"ref/{rec}", "reciter": rec}
+               "source": f"ref/{rec}", "reciter": rec,
+               "verify_phones": phones, "verify_label": 1}
 
 
 def cycle(make_stream):
@@ -356,6 +376,8 @@ def encode_batch(enc, batch, layers, device, max_frames):
     bnd_mask = torch.zeros(B, T)
     seqs, slens = [], []
 
+    verify_ids, verify_labels, verify_present = [], [], []
+
     for i, (f, item) in enumerate(zip(feats, batch)):
         t = min(f.shape[0], T)
         x[i, :t] = torch.from_numpy(f[:t].astype(np.float32))
@@ -371,9 +393,19 @@ def encode_batch(enc, batch, layers, device, max_frames):
             for e in item["ends"]:
                 if 0 <= e < t:
                     bnd[i, e] = 1.0
+        vids = item.get("_verify_ids")
+        if vids is not None:
+            # position INDEX into this batch, not a separate counter --
+            # phase2.verification_loss needs to read the matching row
+            # of the model's OWN logits later, from THIS batch's x/lens.
+            verify_present.append(i)
+            verify_ids.append(vids)
+            verify_labels.append(item.get("verify_label", 1))
 
     return {"x": x, "lens": lens, "seq": torch.cat(seqs),
-            "slens": torch.tensor(slens), "bnd": bnd, "bnd_mask": bnd_mask}
+            "slens": torch.tensor(slens), "bnd": bnd, "bnd_mask": bnd_mask,
+            "verify_present": verify_present, "verify_ids": verify_ids,
+            "verify_labels": verify_labels}
 
 
 # --------------------------------------------------------------------------
@@ -496,11 +528,26 @@ def build_streams(a, vocab, stage):
 
 
 def prepare_item(item, vocab):
-    """Attach integer label ids; drop items with OOV symbols."""
+    """Attach integer label ids; drop items with OOV symbols.
+
+    verify_phones (if present) is converted the same way, but an OOV
+    there only drops the VERIFY signal for this item, not the item
+    itself -- the ordinary CTC target already passed its own check
+    above, and there is no reason to discard a perfectly good training
+    example just because its (separate, optional) verification target
+    happens to contain a rare symbol.
+    """
     ids = [vocab[p] for p in item["phones"] if p in vocab]
     if len(ids) != len(item["phones"]) or not ids:
         return None
     item["_ids"] = torch.tensor(ids, dtype=torch.long)
+
+    vp = item.get("verify_phones")
+    item["_verify_ids"] = None
+    if vp:
+        vids = [vocab[p] for p in vp if p in vocab]
+        if len(vids) == len(vp) and vids:
+            item["_verify_ids"] = torch.tensor(vids, dtype=torch.long)
     return item
 
 
@@ -533,9 +580,12 @@ def run_training(a, stage):
            "n_layers": len(a.layers), "layers": a.layers,
            "n_phones": n_phones}
 
+    verify_head = PH2.VerificationHead().to(device) if a.verify_loss else None
+    params = list(model.parameters())
+    if verify_head is not None:
+        params += list(verify_head.parameters())
     start_step = 0
-    opt = torch.optim.AdamW(model.parameters(), lr=a.lr,
-                            weight_decay=a.weight_decay)
+    opt = torch.optim.AdamW(params, lr=a.lr, weight_decay=a.weight_decay)
     scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
     out_dir = Path(a.out)
@@ -553,6 +603,8 @@ def run_training(a, stage):
         opt.load_state_dict(ck["opt"])
         scaler.load_state_dict(ck["scaler"])
         start_step = ck["step"]
+        if verify_head is not None and ck.get("verify_head"):
+            verify_head.load_state_dict(ck["verify_head"])
         print(f"resumed from {resume_path} at step {start_step}")
 
     print(f"\nstage      : {stage}")
@@ -564,6 +616,12 @@ def run_training(a, stage):
           f"here would make Iqra_TTS actively harmful)")
     print(f"boundary   : lambda {a.lam_bnd}, supervised only by local "
           f"items (local_ratio {a.local_ratio})")
+    if verify_head is not None:
+        print(f"verify     : ON, lambda {a.lam_verify} -- train/phase2.py's "
+              f"decoding-aware loss, gradient flows into the phone head "
+              f"itself (not a post-hoc classifier, see phase1.py for that)")
+    else:
+        print(f"verify     : off (--verify-loss to enable)")
     print(f"schedule   : tri-stage, peak {a.lr}, {a.total_steps} steps\n")
 
     streams, weights = build_streams(a, vocab, stage)
@@ -574,7 +632,7 @@ def run_training(a, stage):
     model.train()
     step = start_step
     t0 = time.time()
-    run_ctc, run_bnd, nb = 0.0, 0.0, 0
+    run_ctc, run_bnd, run_verify, nb = 0.0, 0.0, 0.0, 0
     best = float("inf")
     deadline = t0 + a.max_hours_wall * 3600 if a.max_hours_wall else None
 
@@ -606,7 +664,27 @@ def run_training(a, stage):
             if not a.no_boundary and out.get("boundary") is not None:
                 lb = boundary_loss(out["boundary"], b["bnd"].to(device),
                                    bnd_mask.to(device), a.pos_weight)
-            loss = lc + a.lam_bnd * lb
+            lv = torch.zeros((), device=device)
+            if verify_head is not None and b["verify_present"]:
+                # Restrict to the batch rows that actually carry a
+                # verify target -- everything else (an item whose
+                # verify_phones had an OOV symbol, or no phoneme_ref at
+                # all) sits out of this loss term entirely, same
+                # principle as bnd_mask above but at whole-ROW rather
+                # than per-frame granularity, since a target sequence
+                # can't be partially supervised.
+                idx = torch.tensor(b["verify_present"], device=device)
+                sub_lp = F.log_softmax(
+                    out["logits"][idx].float(), dim=-1).transpose(0, 1)
+                sub_lens = b["lens"].to(device)[idx]
+                vtgt = torch.cat(b["verify_ids"]).to(device)
+                vtlen = torch.tensor([len(v) for v in b["verify_ids"]],
+                                     device=device)
+                vlabel = torch.tensor(b["verify_labels"], dtype=torch.float32,
+                                      device=device)
+                lv, _ = PH2.verification_loss(verify_head, sub_lp, vtgt,
+                                              sub_lens, vtlen, vlabel)
+            loss = lc + a.lam_bnd * lb + a.lam_verify * lv
 
         if not torch.isfinite(loss):
             step += 1
@@ -625,12 +703,16 @@ def run_training(a, stage):
                 if not n_.startswith("out."):
                     if p_.grad is not None:
                         p_.grad.zero_()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), a.clip)
+        clip_params = list(model.parameters())
+        if verify_head is not None:
+            clip_params += list(verify_head.parameters())
+        torch.nn.utils.clip_grad_norm_(clip_params, a.clip)
         scaler.step(opt)
         scaler.update()
 
         run_ctc += lc.item()
         run_bnd += float(lb.detach())
+        run_verify += float(lv.detach())
         nb += 1
         step += 1
 
@@ -638,15 +720,19 @@ def run_training(a, stage):
             el = time.time() - t0
             print(f"step {step:7d}/{a.total_steps}  "
                   f"ctc {run_ctc/max(nb,1):7.4f}  "
-                  f"bnd {run_bnd/max(nb,1):7.4f}  lr {lr:.2e}  "
+                  f"bnd {run_bnd/max(nb,1):7.4f}  "
+                  f"verify {run_verify/max(nb,1):7.4f}  lr {lr:.2e}  "
                   f"{el/60:6.1f}m  {(step-start_step)/max(el,1):.2f} steps/s",
                   flush=True)
-            run_ctc, run_bnd, nb = 0.0, 0.0, 0
+            run_ctc, run_bnd, run_verify, nb = 0.0, 0.0, 0.0, 0
 
+        vh_state = ({"verify_head": verify_head.state_dict()}
+                   if verify_head is not None else None)
         if step % a.ckpt_every == 0:
-            save_ckpt(resume_path, model, opt, scaler, step, vocab, cfg)
+            save_ckpt(resume_path, model, opt, scaler, step, vocab, cfg,
+                      vh_state)
             save_ckpt(out_dir / f"stage{stage}_last.pt", model, opt,
-                      scaler, step, vocab, cfg)
+                      scaler, step, vocab, cfg, vh_state)
             # free anything the last window left behind before the next
             # one allocates; on a memory-constrained box this was the
             # difference between finishing and an OOM kill
@@ -655,9 +741,11 @@ def run_training(a, stage):
                 torch.cuda.empty_cache()
             print(f"  checkpointed at step {step}", flush=True)
 
-    save_ckpt(resume_path, model, opt, scaler, step, vocab, cfg)
+    vh_state = ({"verify_head": verify_head.state_dict()}
+               if verify_head is not None else None)
+    save_ckpt(resume_path, model, opt, scaler, step, vocab, cfg, vh_state)
     save_ckpt(out_dir / f"stage{stage}_last.pt", model, opt, scaler, step,
-              vocab, cfg)
+              vocab, cfg, vh_state)
     print(f"\nstopped at step {step} -> {out_dir}/stage{stage}_last.pt")
     print("NOTE: this trainer has no held-out val loop -- streaming makes")
     print("a clean split awkward and the honest evaluation for this")
@@ -697,6 +785,22 @@ def add_common(p):
     p.add_argument("--lam-bnd", type=float, default=1.0)
     p.add_argument("--pos-weight", type=float, default=20.0)
     p.add_argument("--no-boundary", action="store_true")
+
+    p.add_argument("--verify-loss", action="store_true",
+                   help="train/phase2.py's decoding-aware verification "
+                        "loss, off by default. Uses phoneme_ref vs "
+                        "phoneme_mis pairs already in the stream (no "
+                        "extra data) to teach the head to make correct "
+                        "vs mispronounced audio SEPARABLE on the same "
+                        "constrained-alignment score decode.py "
+                        "thresholds at inference, not just to "
+                        "transcribe accurately.")
+    p.add_argument("--lam-verify", type=float, default=0.5,
+                   help="weight on the verify loss when --verify-loss "
+                        "is set. Unvalidated starting point -- this "
+                        "project's priority order is a plain retrain "
+                        "first, then re-measuring this weight, not "
+                        "picking it in the abstract.")
 
     p.add_argument("--specaug", action="store_true", default=True)
     p.add_argument("--no-specaug", dest="specaug", action="store_false")
