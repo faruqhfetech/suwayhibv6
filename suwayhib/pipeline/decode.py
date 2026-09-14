@@ -290,53 +290,55 @@ class StreamingDecoder:
         for logp in frames:
             ev = dec.step(logp)
 
-    TWO FAILURE MODES FOUND BY INSTRUMENTING A STALLED WORD'S SCORE
-    OVER TIME, NOT VISIBLE FROM THE SELF-TEST OR ANY SINGLE-FRAME VIEW
-    --------------------------------------------------------------------
-    1. A full word alignment can complete in as few frames as the
-       automaton's structural minimum (~1 frame per phone via skip
-       transitions), regardless of whether that many frames of real
-       audio have actually elapsed. Measured on a real recording: a
-       9-phone word "fully aligned" (reached the exit state) in 8
-       frames (160ms) -- physically impossible for real speech, but
-       perfectly legal in the DP, and it is the ONLY completed
-       candidate available for the exit score to report until an
-       honestly-timed alignment also finishes. At a loose enough tau
-       this lets an utterance confirm on evidence that is not evidence
-       at all -- and per the testset tau sweep, that is not
-       theoretical: "correct confirmed" is NON-MONOTONIC in tau,
-       peaking around -1.5/-1.75 and dropping on the LOOSE side too,
-       which only makes sense if looser tau is causing premature
-       confirms that misalign every later word and fail the utterance.
-       `min_frames_per_phone` below rejects the exit score as usable
-       until enough wall-clock frames have elapsed for the alignment to
-       be physically plausible, independent of tau.
+    TWO THINGS FOUND BY INSTRUMENTING A STALLED WORD'S SCORE OVER TIME,
+    ONE FIXED, ONE STILL OPEN -- both from directly tracing a real
+    recording's exit_score frame-by-frame, not from reasoning about the
+    code in the abstract. Recorded here because both conclusions took
+    an actual sweep on testset/ to reach, and the FIRST instinct (a
+    duration cap) turned out to be wrong on measurement, not just risky
+    in theory -- worth keeping so nobody re-tries the same fix later
+    without re-running the sweep that killed it.
 
-    2. Once a word's lattice completes, it keeps listening to every
-       subsequent frame FOREVER while stalled -- there is no bound.
-       Because the exit score's raw log-prob keeps accumulating whatever
-       comes next (normalised only by the now-frozen phone-frame span),
-       a stalled word's displayed score is not stable: it drifts based
-       on unrelated future audio. Measured on a real "clean" word that
-       never confirmed: its normalised score peaked near tau (-2.13,
-       tau -1.5) around the word's true acoustic completion, then
-       degraded to -11.1 as more frames arrived -- because once this
-       word failed to confirm, the NEXT word's speech onset started
-       bleeding into what this lattice can only interpret as "this
-       word's trailing silence", and it is not silence. `max_frames`
-       below bounds how long a single attempt keeps accumulating this
-       kind of contamination: past that point the lattice resets to a
-       fresh attempt (cursor unchanged) instead of compounding a failed
-       alignment with an increasingly irrelevant tail. `_word_frames`
-       is deliberately NOT reset by this -- it is the total time spent
-       on this word across however many internal resets, and is what
-       the learner-facing `stalled` signal is built from; resetting it
-       would make the UI misreport recovery that never happened.
+    CONFIRMED REAL, FIXED HERE: a full word alignment can reach the
+    lattice's exit state in as few frames as the automaton's structural
+    minimum (~1 frame per phone via skip transitions), regardless of how
+    much real audio has actually elapsed -- measured directly: a 9-phone
+    word "fully aligned" in 8 frames (160ms), which is not physically
+    possible. `min_frames_per_phone` rejects the exit score as usable
+    evidence until enough wall-clock frames have elapsed for the
+    alignment to be plausible, independent of tau. This costs nothing
+    (a sweep across the full tau range with and without it produced
+    IDENTICAL numbers -- the pathological alignment exists but never
+    happened to be the deciding factor on this corpus) and remains
+    cheap insurance against a demonstrated failure mode.
+
+    CONFIRMED REAL, BUT NOT FIXED BY THE FIRST ATTEMPT: once a word's
+    lattice completes, it keeps listening to every subsequent frame
+    forever while stalled, and its score drifts on whatever comes next
+    (measured: a word's score peaked near tau then degraded 9 points as
+    the NEXT word's audio bled into what this lattice reads as "this
+    word's trailing silence"). The natural-seeming fix -- cap how long
+    an unconfirmed attempt keeps running, then reset to a fresh attempt
+    -- was implemented, self-tested (10/10 still passed), and then
+    DISPROVEN by the same testset sweep that motivated it: correct-item
+    full-utterance completion dropped from 91.4% to 76.3% at tau=-1.5,
+    because plenty of genuinely-correct words legitimately take longer
+    to converge than any tried cap, and resetting mid-convergence throws
+    away real progress rather than contamination. That fix was reverted.
+    The testset sweep's non-monotonic "correct confirmed" curve (peaks
+    around tau -1.5/-1.75, drops on the LOOSE side too) is real and
+    reproducible, but its cause is NOT the fast-alignment artifact above
+    (the min-frames gate that specifically blocks that artifact changes
+    the curve not at all) and is most likely the more fundamental
+    property the literature review already flagged: a single global tau
+    forcing a full alignment against whatever partial audio has arrived
+    so far can cross threshold on a partially-spoken word at loose
+    settings, which is a calibration/architecture question (per-phone or
+    learned adaptive rejection), not a bounded-lifetime bug. Left open.
     """
 
     def __init__(self, words, blank_id, tau=-1.5, dwell_cap=40,
-                 commit_lag=8, stall_lag=60, min_frames_per_phone=2,
-                 max_frames_per_phone=25, max_frames_floor=100):
+                 commit_lag=8, stall_lag=60, min_frames_per_phone=2):
         self.words = words
         self.blank_id = blank_id
         self.tau = tau
@@ -344,20 +346,17 @@ class StreamingDecoder:
         self.commit_lag = commit_lag
         self.stall_lag = stall_lag
         self.min_frames_per_phone = min_frames_per_phone
-        self.max_frames_per_phone = max_frames_per_phone
-        self.max_frames_floor = max_frames_floor
 
         self.cursor = 0
         self.confirmed = []
-        self._word_frames = 0
+        self._above = 0
+        self._below = 0
         self._new_lattice()
 
     def _new_lattice(self):
         self.lattice = (WordLattice(self.words[self.cursor], self.blank_id,
                                     self.dwell_cap)
                         if self.cursor < len(self.words) else None)
-        self._above = 0
-        self._below = 0
 
     @property
     def done(self):
@@ -369,7 +368,6 @@ class StreamingDecoder:
                     "done": True, "score": None}
 
         self.lattice.step(logp)
-        self._word_frames += 1
         s = self.lattice.exit_score
 
         n_phones = (self.lattice.L - 1) // 2
@@ -384,27 +382,20 @@ class StreamingDecoder:
             idx = self.cursor
             self.confirmed.append(idx)
             self.cursor += 1
-            self._word_frames = 0
             self._new_lattice()
+            self._above = self._below = 0
             confirmed = True
-        else:
-            max_frames = max(self.max_frames_floor,
-                             n_phones * self.max_frames_per_phone)
-            if self.lattice.n_frames >= max_frames:
-                self._new_lattice()
 
         return {"confirmed": confirmed, "word_idx": idx,
-                "stalled": self._word_frames >= self.stall_lag,
+                "stalled": self._below >= self.stall_lag,
                 "done": self.done, "score": s}
 
 
 def decode_utterance(words, logp, blank_id=0, tau=-1.5, dwell_cap=40,
-                     commit_lag=8, stall_lag=60, min_frames_per_phone=2,
-                     max_frames_per_phone=25, max_frames_floor=100):
+                     commit_lag=8, stall_lag=60, min_frames_per_phone=2):
     """-> (confirmed [(frame, word_idx)], final cursor, decoder)."""
     dec = StreamingDecoder(words, blank_id, tau, dwell_cap, commit_lag,
-                           stall_lag, min_frames_per_phone,
-                           max_frames_per_phone, max_frames_floor)
+                           stall_lag, min_frames_per_phone)
     trace = []
     for t in range(logp.shape[0]):
         ev = dec.step(logp[t])
@@ -719,16 +710,13 @@ def cmd_run(a):
     items = _prepare_any(a)
     print(f"\ntau {a.tau}   dwell cap {a.dwell_cap} frames "
           f"({a.dwell_cap * 20}ms)   commit lag {a.commit_lag} frames "
-          f"({a.commit_lag * 20}ms)   min {a.min_frames_per_phone}/max "
-          f"{a.max_frames_per_phone} frames per phone (floor "
-          f"{a.max_frames_floor})\n")
+          f"({a.commit_lag * 20}ms)   min {a.min_frames_per_phone} "
+          f"frames/phone\n")
     for d, words, logp in items:
         trace, cursor, dec = decode_utterance(
             words, logp, tau=a.tau, dwell_cap=a.dwell_cap,
             commit_lag=a.commit_lag,
-            min_frames_per_phone=a.min_frames_per_phone,
-            max_frames_per_phone=a.max_frames_per_phone,
-            max_frames_floor=a.max_frames_floor)
+            min_frames_per_phone=a.min_frames_per_phone)
         print(f"{d['file']:<16} [{d['kind']:<9}] words={len(words)}  "
               f"confirmed={len(trace)}  cursor={cursor}")
         for t, wi in trace:
@@ -771,9 +759,7 @@ def cmd_sweep(a):
             _, cursor, _ = decode_utterance(
                 words, logp, tau=tau, dwell_cap=a.dwell_cap,
                 commit_lag=a.commit_lag,
-                min_frames_per_phone=a.min_frames_per_phone,
-                max_frames_per_phone=a.max_frames_per_phone,
-                max_frames_floor=a.max_frames_floor)
+                min_frames_per_phone=a.min_frames_per_phone)
             full = cursor >= len(words)
             if d["kind"] == "correct":
                 tot_c += 1
@@ -807,9 +793,7 @@ def cmd_sweep(a):
             _, cursor, _ = decode_utterance(
                 words, logp, tau=a.tau, dwell_cap=a.dwell_cap,
                 commit_lag=a.commit_lag,
-                min_frames_per_phone=a.min_frames_per_phone,
-                max_frames_per_phone=a.max_frames_per_phone,
-                max_frames_floor=a.max_frames_floor)
+                min_frames_per_phone=a.min_frames_per_phone)
             full = cursor >= len(words)
             want_full = (d["kind"] == "correct")
             seen[et] += 1
@@ -844,16 +828,6 @@ def main():
                             "elapsed -- rejects structurally-fastest-"
                             "possible alignments that complete before "
                             "real speech could have produced them")
-        p.add_argument("--max-frames-per-phone", type=int, default=25,
-                       help="a word attempt that has run this many "
-                            "frames per phone without confirming resets "
-                            "to a fresh attempt, so a stalled word's "
-                            "score cannot keep drifting on whatever "
-                            "audio (silence, or the next word bleeding "
-                            "in) arrives after it has already failed")
-        p.add_argument("--max-frames-floor", type=int, default=100,
-                       help="floor on the above, so short words still "
-                            "get a fair minimum attempt window")
         # New, opt-in only: default "recs" reproduces exactly the
         # existing behaviour with zero args changed, so nothing that
         # already worked against recs/ is affected by adding this.
