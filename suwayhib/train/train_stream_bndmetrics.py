@@ -793,6 +793,42 @@ def spec_augment(x, lens, bnd_mask, n_time=2, time_frac=0.05,
     return x, bnd_mask
 
 
+def effective_warmup_head(warmup_head, total_steps, frac):
+    """-> how many steps head-only warmup actually lasts.
+
+    min(absolute, frac * total_steps), and the two halves are doing
+    different jobs.
+
+    The ABSOLUTE number is the real setting. Head-only warmup exists to
+    stop CTC collapsing to all-blank while the output projection is
+    still random, and that is a property of early optimisation dynamics
+    -- it takes about as many steps to settle whether the run is 2,000
+    steps or 200,000. Scaling it with run length would be wrong at the
+    long end: a pure 10% would give the stage1 default (120k steps)
+    12,000 steps of head-only warmup instead of 500, freezing the trunk
+    for 24x longer than intended on the run that matters most.
+
+    The FRACTION is a guard against the opposite failure, which actually
+    bit: --warmup-head defaulted to 500 while a smoke run asked for 200
+    total steps, so `step < warmup_head` held on EVERY step and the run
+    trained two tensors (out.weight, out.bias) from start to finish. The
+    trunk and the boundary head never moved, CTC still fell because a
+    linear readout on a fixed random trunk can learn something, and the
+    run looked superficially healthy. Nothing printed the warmup length,
+    so nothing contradicted that impression.
+
+    Hence: keep the absolute value for real runs, and never let warmup
+    consume more than `frac` of any run. At the shipped defaults the
+    stage1 (120k) and stage2 (8k) configs both come out at exactly 500,
+    unchanged; a 200-step smoke run comes out at 20.
+    """
+    if warmup_head <= 0 or total_steps <= 0:
+        return 0
+    if frac <= 0:
+        return warmup_head
+    return max(0, min(int(warmup_head), int(total_steps * frac)))
+
+
 def tristage_lr(step, total, peak, warm=0.10, hold=0.40, final_scale=0.05):
     """wav2vec2's tri-state schedule: warm up 10%, hold 40%, decay 50%.
 
@@ -1197,6 +1233,12 @@ def run_training(a, stage):
             print(f"resumed from {resume_path} at step {start_step} "
                   f"(best {a.select_on} so far: {seen})")
 
+    # Resolved ONCE, up front, so the training loop compares against a
+    # settled number and the banner can state it (see the helper: the
+    # bug this fixes was invisible precisely because nothing printed it).
+    warmup_head = effective_warmup_head(a.warmup_head, a.total_steps,
+                                        a.warmup_head_frac)
+
     if is_main:
         print(f"\nstage      : {stage}")
         print(f"vocab      : {n_phones} phones + blank")
@@ -1205,6 +1247,16 @@ def run_training(a, stage):
         print(f"labels     : {a.label_col}  "
               f"(phoneme_mis = what was ACTUALLY said; using phoneme_ref "
               f"here would make Iqra_TTS actively harmful)")
+        if warmup_head > 0:
+            capped = ("" if warmup_head == a.warmup_head else
+                      f"  (capped from {a.warmup_head} by "
+                      f"--warmup-head-frac {a.warmup_head_frac:g} of "
+                      f"{a.total_steps})")
+            print(f"warmup     : head-only for the first {warmup_head} of "
+                  f"{a.total_steps} steps -- ONLY out.weight/out.bias "
+                  f"train until then{capped}")
+        else:
+            print(f"warmup     : none -- the whole model trains from step 0")
         print(f"boundary   : lambda {a.lam_bnd}, supervised only by local "
               f"items (local_ratio {a.local_ratio})")
         if not a.no_boundary:
@@ -1393,7 +1445,7 @@ def run_training(a, stage):
         # raw_model and model share the SAME underlying parameter
         # tensors either way, so zeroing via raw_model's names still
         # correctly zeroes the gradients DDP will reduce.
-        if step < a.warmup_head:
+        if step < warmup_head:
             for n_, p_ in raw_model.named_parameters():
                 if not n_.startswith("out."):
                     if p_.grad is not None:
@@ -1570,7 +1622,23 @@ def add_common(p):
     p.add_argument("--weight-decay", type=float, default=0.01)
     p.add_argument("--clip", type=float, default=5.0)
     p.add_argument("--total-steps", type=int, default=120000)
-    p.add_argument("--warmup-head", type=int, default=500)
+    p.add_argument("--warmup-head", type=int, default=500,
+                   help="Steps of head-only warmup: train ONLY the output "
+                        "projection at first, so CTC does not collapse to "
+                        "all-blank while it is still random. An absolute "
+                        "step count on purpose -- this is early "
+                        "optimisation behaviour and does not scale with "
+                        "run length. 0 disables it. Capped by "
+                        "--warmup-head-frac.")
+    p.add_argument("--warmup-head-frac", type=float, default=0.10,
+                   help="Ceiling on head-only warmup as a fraction of "
+                        "--total-steps; the effective warmup is "
+                        "min(--warmup-head, frac * total_steps). Exists "
+                        "so a short run cannot spend all of itself in "
+                        "warmup training two tensors, which is what a "
+                        "200-step run against the 500-step default did. "
+                        "Does not change the stage1/stage2 defaults, "
+                        "which both resolve to 500. 0 disables the cap.")
     p.add_argument("--dynamic", action="store_true", default=True)
     p.add_argument("--no-dynamic", dest="dynamic", action="store_false")
 
