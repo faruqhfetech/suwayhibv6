@@ -430,8 +430,9 @@ def cmd_submit(a):
     model, vocab, inv, cfg = load_checkpoint(a.ckpt, torch.device(a.device))
     device = torch.device(a.device)
 
-    from datasets import load_dataset
+    from datasets import Audio, load_dataset
     ds = load_dataset("IqraEval/QuranMB.v2", split="test")
+    ds = ds.cast_column("audio", Audio(decode=False))
     real_ids = ds["ID"]
     print(f"cache items: {len(cache)}   dataset rows: {len(real_ids)}")
     if len(cache) != len(real_ids):

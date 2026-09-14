@@ -62,6 +62,7 @@ import argparse
 import json
 import math
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -176,13 +177,37 @@ def _decode_audio_field(a):
 
     `datasets` has changed this field's type across versions: older
     releases hand back a plain dict {"array", "sampling_rate"}, newer ones
-    a torchcodec AudioDecoder object. Both shapes appear in the wild
-    depending on the installed version, so handle both rather than pinning
-    -- and fail loudly on anything else instead of guessing, since a
-    silently mis-decoded waveform produces features that look entirely
-    plausible and are entirely wrong.
+    try to hand back a torchcodec AudioDecoder object -- built against a
+    specific torch ABI. Observed on this project: torch 2.11.0+cu130 +
+    torchcodec 0.16.0 crash HARD (native abort, not a catchable
+    exception) the moment `datasets` tries to auto-decode audio, because
+    the two were not built against compatible torch versions. That
+    combination is not exotic -- it is what `pip install` gives you today
+    -- so this project does not rely on `datasets`' own audio decoding at
+    all. Callers MUST load the dataset with
+    `.cast_column("audio", Audio(decode=False))` (see iter_hf/stream_hf),
+    which hands back RAW BYTES instead of asking `datasets` to decode
+    anything, and this function decodes those bytes itself via ffmpeg --
+    the same tool every other audio path in this project already uses,
+    so there is exactly one decoder to trust, not two.
+
+    The old dict/{"array","sampling_rate"} and torchcodec-object branches
+    are kept as a defensive fallback in case a caller forgets the
+    decode=False cast, but the raw-bytes path is the one actually
+    exercised.
     """
-    if isinstance(a, dict):
+    if isinstance(a, dict) and a.get("bytes") is not None:
+        r = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", "pipe:0", "-f", "f32le",
+             "-acodec", "pcm_f32le", "-ac", "1", "-ar", str(SR), "-"],
+            input=a["bytes"], capture_output=True)
+        if r.returncode != 0:
+            raise SystemExit(
+                f"ffmpeg could not decode a streamed audio item: "
+                f"{r.stderr.decode(errors='replace')[:300]}")
+        return np.frombuffer(r.stdout, dtype=np.float32).copy(), SR
+
+    if isinstance(a, dict) and "array" in a:
         return np.asarray(a["array"], dtype=np.float32), int(
             a.get("sampling_rate", SR))
 
@@ -205,8 +230,11 @@ def _decode_audio_field(a):
 
 
 def iter_hf(dataset, split, limit_seconds=None, text_key="tashkeel_sentence"):
-    """Items from an IqraEval HF dataset. Audio decoded by `datasets`."""
-    from datasets import load_dataset
+    """Items from an IqraEval HF dataset. Audio decoded by us (ffmpeg via
+    _decode_audio_field), NOT by `datasets` -- see that function's
+    docstring for why: `datasets`' own torchcodec-based auto-decode
+    crashes hard on this project's torch/torchcodec combination."""
+    from datasets import Audio, load_dataset
     # STREAMING. The non-streaming path materialises the split: on
     # Iqra_train's 71,391 examples that reached 14.3 GB resident (89% of
     # a 16 GB machine), which starved every other process and made the
@@ -214,6 +242,7 @@ def iter_hf(dataset, split, limit_seconds=None, text_key="tashkeel_sentence"):
     # memory flat, at the cost of no random access -- which this loop
     # does not need, since it walks the split in order anyway.
     ds = load_dataset(dataset, split=split, streaming=True)
+    ds = ds.cast_column("audio", Audio(decode=False))
     total = 0.0
     for i, r in enumerate(ds):
         wav, sr = _decode_audio_field(r["audio"])

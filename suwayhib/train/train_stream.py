@@ -179,27 +179,6 @@ def scan_symbols(dataset, split, n=2000, label_col="phoneme_mis"):
 # streaming sources
 # --------------------------------------------------------------------------
 
-def _decode_audio(a):
-    """datasets' audio column has changed representation across versions
-    -- dict in older releases, torchcodec AudioDecoder in newer. Handle
-    both, fail loudly on anything else rather than guessing, since a
-    silently mis-decoded waveform yields features that look entirely
-    plausible and are entirely wrong."""
-    if isinstance(a, dict):
-        return np.asarray(a["array"], dtype=np.float32), int(
-            a.get("sampling_rate", SR))
-    if hasattr(a, "get_all_samples"):
-        s = a.get_all_samples()
-        d = s.data
-        if hasattr(d, "numpy"):
-            d = d.numpy()
-        d = np.asarray(d, dtype=np.float32)
-        if d.ndim == 2:
-            d = d.mean(axis=0)
-        return d, int(s.sample_rate)
-    raise SystemExit(f"unrecognised audio field type {type(a)!r}")
-
-
 def stream_hf(dataset, split, label_col="phoneme_mis", max_hours=None,
               shuffle_buffer=2000, seed=0):
     """Yield {audio, phones, source} from a streamed HF dataset.
@@ -208,9 +187,17 @@ def stream_hf(dataset, split, label_col="phoneme_mis", max_hours=None,
     module docstring for why this is not phoneme_ref. Falls back to
     phoneme_ref when phoneme_mis is absent, which is correct for
     Iqra_train (native speech, the two are identical by construction).
+
+    Audio is decoded via extract.py's _decode_audio_field (ffmpeg-based),
+    NOT by `datasets` itself -- see that function's docstring: `datasets`'
+    own torchcodec-based auto-decode crashes hard on a torch/torchcodec
+    version mismatch that is not exotic (it is what plain `pip install`
+    produced on this project). cast_column(..., decode=False) hands back
+    raw bytes instead of asking `datasets` to decode them.
     """
-    from datasets import load_dataset
+    from datasets import Audio, load_dataset
     ds = load_dataset(dataset, split=split, streaming=True)
+    ds = ds.cast_column("audio", Audio(decode=False))
     if shuffle_buffer:
         ds = ds.shuffle(seed=seed, buffer_size=shuffle_buffer)
     budget = max_hours * 3600 if max_hours else None
@@ -219,7 +206,7 @@ def stream_hf(dataset, split, label_col="phoneme_mis", max_hours=None,
         lab = r.get(label_col) or r.get("phoneme_ref")
         if not lab:
             continue
-        wav, sr = _decode_audio(r["audio"])
+        wav, sr = E._decode_audio_field(r["audio"])
         if sr != SR:
             raise SystemExit(f"{dataset}: sample rate {sr} != {SR}")
         dur = len(wav) / SR
