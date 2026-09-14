@@ -2,6 +2,19 @@ SUWAYHIB -- HANDOVER
 Written to start a fresh conversation. Everything needed to continue is
 here; nothing assumes you saw the earlier work.
 
+NOTE ON THIS DOCUMENT'S VINTAGE (added after the v6 code restructure):
+this handover was written mid-v5 and its FILE MAP (section 9 below) is a
+historical record of the v4/v5 layout -- several of those files
+(device.py, baseline.py, ctcalign2_worstchar.py, stream.py, calibrate.py,
+ctc_score.py) no longer exist, and of the v5 files that did survive into
+this repo, ctcalign2.py/student.py/teacher.py have since been deleted as
+a confirmed-failed lineage (see suwayhibv6.txt for why). The CURRENT code
+lives in the suwayhib/ package (suwayhib/core, suwayhib/pipeline,
+suwayhib/train, suwayhib/tools) -- see the root README.md for the actual
+current layout and how to run things. Everything else in this file
+(sections 0-8) is still accurate project history and hard-won lessons;
+only section 9's file paths are stale.
+
 
 ===============================================================================
 0. THE PROJECT
@@ -557,8 +570,13 @@ differently, before believing it.
     testset/             2,000 labelled synthetic items -- DO NOT REGENERATE
     recs/                seven learner recordings + descriptions.txt
 
-  documentation
-    v4.txt               why v4 looks the way it does
-    v5_notes.txt         v5 results, ablations, and four reversals
-    project_plan.txt     the v5 plan as originally written
-    handover.txt         this file
+  documentation (as of the v6 restructure; see the note at the top of
+  this file -- paths below are current, the v4/v5 code paths above are not)
+    README.md             root of the repo: current suwayhib/ layout, how to run things
+    suwayhibv6.txt         the current paper draft: v6 architecture, results, failures
+    docs/handover.txt      this file -- v1-v5 project history and lessons
+    docs/archive/v4.txt              why v4 looked the way it did
+    docs/archive/v5_notes.txt        v5 results, ablations, and four reversals
+    docs/archive/v5_project_plan.txt the v5 plan as originally written
+    docs/archive/current.txt         a v4-era file-map snapshot, superseded by this note
+    docs/logs/                       captured terminal transcripts of past eval/demo runs
