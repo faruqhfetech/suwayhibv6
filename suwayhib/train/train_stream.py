@@ -232,7 +232,53 @@ def stream_hf(dataset, split, label_col="phoneme_mis", max_hours=None,
         yield item
 
 
-def stream_local(manifest, lib, text_path, audio_cache=None, max_items=None):
+def _fetch_everyayah(path, cache_dir=None, timeout=30):
+    """Fetch one ayah's audio directly from everyayah.com's own public
+    CDN, instead of reading reference_library/'s local copy.
+
+    Why this is safe to rely on: reference_library/ATTRIBUTION.txt
+    already documents that its audio comes from everyayah.com and its
+    word timings come separately from cpfair/quran-align's own
+    published release (18MB, tracked in git under
+    reference_library/timings/ -- NOT something this project computed).
+    The only thing that was ever local-only was the ~12GB of audio
+    BYTES themselves, and everyayah.com serves those same files
+    publicly. Verified directly (HTTP 200, BunnyCDN-backed, CORS-open)
+    for all 8 reciters this project's manifest uses, at exactly the
+    {reciter}/{surah:03d}{ayah:03d}.mp3 URL shape below -- this means a
+    Kaggle run never needs reference_library/'s audio uploaded at all,
+    only the already-tracked manifest + timings.
+
+    `path` is a manifest audio_path like "Alafasy_128kbps/078001.wav"
+    -- only the reciter folder and the surah+ayah digits are taken from
+    it; everyayah.com itself serves .mp3, regardless of whatever
+    extension the local ingested copy ended up with.
+
+    cache_dir, if given, saves each fetched file once. stream_local is
+    wrapped in cycle() for a multi-hour run, so without this every
+    pass through the ~4,400 local items would re-fetch every file from
+    scratch.
+    """
+    import urllib.request
+    reciter = Path(path).parent.name
+    fname = f"{Path(path).stem}.mp3"
+    if cache_dir:
+        cached = Path(cache_dir) / reciter / fname
+        if cached.exists():
+            wav, _sr = E._decode_audio_field({"bytes": cached.read_bytes()})
+            return wav
+    url = f"https://everyayah.com/data/{reciter}/{fname}"
+    with urllib.request.urlopen(url, timeout=timeout) as r:
+        data = r.read()
+    if cache_dir:
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        cached.write_bytes(data)
+    wav, _sr = E._decode_audio_field({"bytes": data})
+    return wav
+
+
+def stream_local(manifest, lib, text_path, audio_cache=None, max_items=None,
+                 everyayah_cache=None):
     """Yield reference-library items WITH word-end frames.
 
     This is the only source of boundary supervision -- see the module
@@ -240,6 +286,16 @@ def stream_local(manifest, lib, text_path, audio_cache=None, max_items=None):
     column, because the reference library has no phoneme annotations of
     its own; it has verified word TIMINGS, which is exactly the thing
     the streamed data lacks.
+
+    Audio resolution order per item: audio_cache (a prebuilt local
+    AudioCache, if given) -> a local file under `lib` (the normal path
+    when reference_library/'s audio happens to be present) -> a live
+    fetch from everyayah.com (see _fetch_everyayah), cached to
+    `everyayah_cache` so repeat passes don't re-fetch. This means the
+    exact same call works unmodified whether reference_library/'s
+    audio is present locally (a dev machine that has it) or absent
+    (a fresh Kaggle clone that only has the tracked manifest +
+    timings) -- nothing needs to know which situation it's in.
     """
     rt = RT.RefText(text_path)
     cache = None
@@ -265,8 +321,13 @@ def stream_local(manifest, lib, text_path, audio_cache=None, max_items=None):
         if not phones:
             continue
         path = words[0]["audio_path"]
-        wav = (cache.ayah(path) if cache
-               else B.decode(Path(lib) / path))
+        local_path = Path(lib) / path
+        if cache:
+            wav = cache.ayah(path)
+        elif local_path.exists():
+            wav = B.decode(local_path)
+        else:
+            wav = _fetch_everyayah(path, cache_dir=everyayah_cache)
         n += 1
         # Professional reciters, verified word segments: this audio
         # always genuinely supports its own canonical G2P sequence, so
@@ -521,7 +582,8 @@ def build_streams(a, vocab, stage):
         # while the banner still printed the configured ratio. See
         # cycle()'s docstring for the measurement that caught this.
         streams.append(cycle(
-            lambda: stream_local(a.manifest, a.lib, a.text, a.audio_cache)))
+            lambda: stream_local(a.manifest, a.lib, a.text, a.audio_cache,
+                                 everyayah_cache=a.everyayah_cache)))
         weights.append(a.local_ratio)
 
     return streams, weights
@@ -830,6 +892,16 @@ def add_common(p):
     p.add_argument("--lib", default="reference_library")
     p.add_argument("--text", default="texts/quran-simple-plain.txt")
     p.add_argument("--audio-cache", default="cache/audio")
+    p.add_argument("--everyayah-cache", default="cache/everyayah",
+                   help="local cache dir for audio fetched live from "
+                        "everyayah.com when reference_library/'s local "
+                        "copy of a file is absent (e.g. on a fresh "
+                        "Kaggle clone that never uploaded the ~12GB of "
+                        "audio -- only the tracked manifest + timings "
+                        "are needed). Set empty/None to disable caching "
+                        "and re-fetch every time (not recommended: "
+                        "stream_local repeats via cycle() for the "
+                        "whole run).")
 
     p.add_argument("--scan-symbols", action="store_true",
                    help="scan the stream's label symbols before building "
