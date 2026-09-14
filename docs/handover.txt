@@ -1,0 +1,564 @@
+SUWAYHIB -- HANDOVER
+Written to start a fresh conversation. Everything needed to continue is
+here; nothing assumes you saw the earlier work.
+
+
+===============================================================================
+0. THE PROJECT
+===============================================================================
+
+Learning to recite the Qur'an correctly needs a teacher's ear -- someone who
+catches a mispronounced word, a skipped elongation, a merged sound. Between
+lessons learners are on their own, and small mistakes become habits. This is
+sharpest in under-resourced settings like Qur'an schools in Kaduna, where
+students practise independently and teacher time is scarce.
+
+Existing tools need an internet connection and send the recitation to a
+cloud server. That is a barrier where connectivity is unreliable, and a
+discomfort for families who would rather a private religious practice not
+leave the room.
+
+Suwayhib is a small, low-cost, standalone practice companion that runs
+entirely offline. Nothing is uploaded, nothing needs signal, nothing about
+the learner's voice leaves the room.
+
+THE GOAL NOW: A STREAMING SYSTEM.
+Not record-then-submit. The learner picks a starting verse and simply
+recites. Words confirm on screen as they are spoken. This is the project;
+it is not negotiable down to batch processing.
+
+
+===============================================================================
+1. WHAT STREAMING MEANS HERE
+===============================================================================
+
+THE USER EXPERIENCE
+  - the learner selects a starting verse and presses start ONCE
+  - they recite continuously; no button between verses
+  - the verse text is displayed, and words turn GREEN as they are confirmed
+  - confirmation is MONOTONIC and never retracted -- a word that goes green
+    and then un-greens is worse than no feedback at all
+  - if the green edge stops advancing, they have hit something. They can
+    keep going, or tap any word to reset the cursor there ("from here")
+  - the session ends on a stop press or ~4 seconds of silence
+
+  NO RED. A wrong word is not marked. The green edge simply stops. This is
+  deliberate and carried from v3/v4: a false stall costs the learner one
+  repetition, a false accusation costs trust -- and this is a child being
+  told they got the Qur'an wrong. Information without accusation.
+
+THE TECHNICAL SHAPE
+  - browser captures with MediaRecorder on a ~250ms timeslice, streams
+    chunks over a WebSocket
+  - the server holds session state: audio buffer, cursor position, confirmed
+    words
+  - on each arriving chunk:
+
+        while true:
+            w = expected_words[cursor]
+            found, end = detect(w, audio, from=audio_pos)
+            if found:
+                confirm(w); cursor += 1; audio_pos = end
+            else:
+                break        # wait for more audio
+
+  - STRICTLY SEQUENTIAL, NO LOOKAHEAD. Wait for word k before considering
+    k+1. This costs the ability to spot a later error while an earlier one
+    is unresolved, but removes cascade failure entirely -- the system can
+    never drift out of alignment because it never advances past something
+    unresolved.
+  - one chunk may confirm SEVERAL words if the learner is ahead; the cursor
+    catches up greedily
+  - on a stall: after a timeout, pause and ask the learner to take it again
+    from that word. The system does NOT have to work out WHY the word is
+    missing (skipped, mispronounced, still coming, stopped) -- only that it
+    is stuck. That collapses four hard classification problems into one easy
+    one.
+
+THE CORE QUESTION THE MODEL MUST ANSWER
+  Given a chunk of audio and an expected word: DOES THIS WORD APPEAR IN THIS
+  AUDIO, and if so where does it end?
+
+  Note this is DETECTION, not verification. It must be able to say NOT
+  FOUND. That distinction is the single most important thing in this
+  document -- see section 4.
+
+
+===============================================================================
+2. WHAT ALREADY WORKS  (v1 - v4)
+===============================================================================
+
+v1  MFCC/DTW FEATURES + CLASSIFIER SHOPPING
+    82 AUC, F1 ~60. Swapping MLP, logistic regression and tree models over
+    the same features moved it a couple of points each. Three model families
+    with very different inductive biases all capping out is the signature of
+    a REPRESENTATION limit, not a model limit.
+
+v3  DURATION DEVIATION -- no training, no model file
+    Aligns the learner against reference recitations by OTHER reciters with
+    DTW, maps known word boundaries through the warp path, and scores each
+    word on how far its implied duration sits from what the reference
+    reciters agree on.
+
+      detection AUPRC 0.901 (baseline 0.700), holdout 0.915
+      artifact-control gap -0.007, top-1 localization 0.543
+      truncation 0.944  deletion 0.758  repetition 0.344
+      madd 0.380-0.388  substitution 0.360  near-miss 0.250
+
+    Best single feature (mean_log_dev) reached 0.918 holdout AP alone vs
+    0.925 for logistic regression over seven features. Seven thousandths was
+    not worth a training dependency on a Pi, so v3 ships the single feature.
+
+    STRONG on structure, BLIND on segmental content -- duration cannot see a
+    wrong phoneme of the right length.
+
+v4a CONTRASTIVE ACOUSTIC WORD EMBEDDINGS -- implemented, ABANDONED
+    val AP 0.54 (unseen words, seen voices) but holdout AP 0.064 (unseen
+    VOICES). It learned words, not speaker invariance.
+
+    THE REASON, and it is the transferable finding: speaker-invariance work
+    in the literature trains on HUNDREDS TO THOUSANDS of speakers. This
+    corpus has SIX. With six voices there are not enough directions of
+    speaker variation to separate "voice" from "word", so the model encodes
+    voice -- because with six voices, voice IS a reliable cue. No
+    architecture or loss change fixes a data limit.
+
+v4b FORCED DECODING -- THIS IS THE SHIPPED DEVICE, AND IT WORKS
+    The verse is known before the learner recites. So teacher-force a
+    Whisper decoder with that text and read the probability it assigns to
+    each token. No training, no gallery, no per-word threshold.
+
+    Model: tarteel-ai/whisper-base-ar-quran (72.6M). Fine-tuned on Qur'anic
+    Arabic by Tarteel, whose training data is crowdsourced recitations from
+    THOUSANDS of ordinary users -- exactly the speaker diversity this corpus
+    lacks, already in the weights.
+
+    MEASURED, worst-token probability per word:
+      reference reciter, 160 words   median 1.0000, p05 0.9993, min 0.9913
+      learner, correct, careful      0.51 - 1.00 (10 verses, no false flags)
+      learner, deliberate س -> ص     0.000
+      wrong verse entirely           0.000 (every word)
+    Nothing observed between 0.13 and 0.51. The threshold needed no fitting.
+
+    DEPLOYMENT: ~300 MB, 0.48s per attempt on laptop CPU (RTF 0.08),
+    estimated 2-2.5s on a Pi 4. Forced decoding is a SINGLE forward pass --
+    the tokens are known, so no autoregressive generation and no beam
+    search. That is why it is cheaper than transcription.
+
+    A WORKED EXAMPLE. 78:9 نَوْمَكُمْ scored 0.000 across three takes. We
+    suspected a model defect -- the reference reciter scores 0.982 on the
+    same word and text. Reciting it more deliberately moved it to 0.13, then
+    0.99. The model had been right every time; the articulation was weak.
+
+    LIMITATION: v4 is RECORD-THEN-SUBMIT. It scores a whole verse after the
+    learner finishes. It is not streaming, which is why v5 exists.
+
+v5  WHERE IT STANDS -- see section 4
+
+
+===============================================================================
+3. THE DATA
+===============================================================================
+
+reference_library/
+  Eight professional reciters, ayah-level MP3s, surahs 78-114 (564 each):
+      Abdul_Basit_Murattal_64kbps    Hani_Rifai_192kbps
+      Abu_Bakr_Ash-Shaatree_128kbps  Husary_64kbps
+      Alafasy_128kbps                Minshawy_Murattal_128kbps
+      Mohammad_al_Tablaway_128kbps   Saood_ash-Shuraym_128kbps
+
+  timings/          quran-align JSON, word-level, all 6236 ayahs
+  ATTRIBUTION.txt   sources and OPEN LICENCE QUESTIONS
+  excluded_ayahs.json   10 ayahs excluded, each with a written reason
+  verification_report.txt
+
+  IMPORTANT: the word timings are NOT from everyayah. everyayah hosts
+  ayah-level audio only. The timings come from cpfair/quran-align, which ran
+  a FORCED ALIGNER over those recordings. They are machine estimates, which
+  is why they needed verifying -- see manifest_full.csv.
+
+  Husary and Minshawy are the HELD-OUT reciters throughout v3/v4/v5. Keep
+  them held out or the comparisons break.
+
+manifest_full.csv
+  18,144 VERIFIED word segments:
+      reciter, surah, ayah, word_idx, start_ms, end_ms,
+      multiword_segment, audio_path
+
+  557 of 564 ayahs survived verification. Checks that produced it: monotonic
+  segments, segments inside the audio, word-count agreement ACROSS reciters,
+  word-index coverage, implausibly short words, cross-reciter duration
+  outliers.
+
+  THE CHECK THAT EARNED ITS KEEP: rows must divide evenly by reciter count.
+  Eight reciters saying identical text cannot produce a fractional row
+  count. That one assertion caught two parse bugs that passed every other
+  structural test -- an exclusive-vs-inclusive index error, and reciters
+  with SKIPPED word indices.
+
+  multiword_segment=1 marks words the aligner could not split apart. Only 2
+  in the whole corpus. Those words cannot be isolated for playback.
+
+manifest_full_suspects.csv
+  570 words whose duration disagrees with the other reciters. A TRIAGE
+  QUEUE, not a defect list -- forced alignment always has a tail.
+
+recs/
+  SEVEN LEARNER RECORDINGS, one adult male voice, with descriptions.txt:
+
+      Recording.m4a    | 78 6  | correct
+      Recording_1.m4a  | 78 7  | correct
+      Recording_2.m4a  | 78 8  | correct
+      Recording_3.m4a  | 78 9  | correct
+      Recording_4.m4a  | 78 10 | error - wrong word (a DIFFERENT verse)
+      Recording_5.m4a  | 78 9  | correct
+      Recording_6.m4a  | 78 9  | error - wrong letter (س/ص)
+
+  THESE ARE THE ONLY UNCONTAMINATED EVALUATION DATA IN THE PROJECT. The
+  reference reciters are almost certainly inside Whisper-Quran's
+  fine-tuning set (Tarteel trained on EveryAyah, the same corpus), so
+  held-out-reciter numbers are an upper bound. This voice is not.
+
+  Recording_5 and Recording_6 are the key pair: same verse, same voice,
+  minutes apart, one correct and one with a deliberate س -> ص swap. Under
+  v4's forced decoding they score 0.994 and 0.000 on that word.
+
+texts/
+  Six Tanzil script variants, 6236 lines each. THREE RULES, all derived by
+  measurement (scoring a professional reciter, who is correct by
+  construction, against each variant):
+
+    1. USE quran-simple-plain. Mean worst-token by variant:
+         simple-plain 0.87, simple 0.65, uthmani 0.25, the -min variants
+         0.00. The Tarteel models were fine-tuned on imlaei script.
+    2. STRIP U+0670 (SUPERSCRIPT ALEF). This ONE codepoint caused 9 of 11
+       mismatched ayahs -- every alif-maqsura ending (مُوسَىٰ, إِلَىٰ) and
+       الرَّحْمَٰن. Removing it took the reciter from 11/60 failures to 2/60.
+    3. STRIP THE BASMALA from ayah 1 of every surah except 1 and 9. Tanzil
+       prepends it; the audio does not contain it. Take the prefix FROM THE
+       TEXT -- verse 1:1 IS the basmala. Two hand-typed attempts failed
+       because the superscript alef does not survive a shell paste.
+
+    After all three: mean worst-token 0.9994, 0 of 60 ayahs below 0.5.
+
+    DIACRITICS ARE REQUIRED. Every harakat-stripped variant scored EXACTLY
+    0.000. The model genuinely hears vowelling, which is what makes
+    per-token diagnosis (kasra vs sukun) meaningful.
+
+  reftext.py implements all three rules. Use it; do not re-derive them.
+
+testset/
+  2,000 labelled synthetic items from injector.py, in three tiers
+  (structural / prosodic / segmental) plus a CONTROL class.
+
+  THE ARTIFACT CONTROL is why these numbers are credible: 10% of items are
+  audio cut and rejoined AT THE SAME POINT -- a splice seam, no error,
+  labelled negative. If a model flags those it is detecting EDITS, not
+  mispronunciation. Measured gap: -0.007. Passed three times.
+
+  DO NOT REGENERATE testset/. It is the anchor that makes v3, v4 and v5
+  comparable.
+
+
+===============================================================================
+4. v5: WHAT WAS TRIED, AND THE ONE THING THAT MATTERS
+===============================================================================
+
+THE IDEA
+  v4 uses a 72.6M general ASR model for a task where the verse is known in
+  advance and Juz Amma has only ~2,200 distinct words. That is verification,
+  not recognition -- the model never has to search a vocabulary, only check
+  a hypothesis. So: distil a small model from the v4 teacher.
+
+WHAT WAS BUILT
+  teacher.py    generates supervision. For each ayah it builds augmented
+                and/or deliberately corrupted variants, runs the v4 teacher
+                over each, and records the per-word probability. Variants
+                are stored as RECIPES (source + seed + operations), not
+                audio -- render() regenerates them deterministically, so the
+                audio the student sees is bit-identical to what the teacher
+                scored.
+  student.py    the small model, 811K params: depthwise-separable conv
+                acoustic encoder + BiLSTM text encoder over CHARACTERS WITH
+                HARAKAT + CTC head + cosine-similarity embedding head.
+                Trained on distillation + in-batch metric learning + CTC.
+
+THE OFFLINE RESULT -- THIS IS SOLID
+      architecture                     params   holdout AUC   balanced
+      BCE on a scalar, width 256        1.0M        0.880       82.0%
+      CTC + metric + distillation       811K        0.919       86.7%
+
+  Both heads combined at lambda 2.0. Held-out reciters. The CTC head ALONE
+  (84.9%) beats the embedding head (82.7%), and the combination beats both.
+
+  Distillation ablation: worth ~1.5pp balanced accuracy and ~0.014 AUC, plus
+  CALIBRATION. Without it the model's outputs compress into a narrow high
+  band -- ordering intact, scale useless.
+
+THE STREAMING ATTEMPT -- THIS IS WHERE IT STANDS, AND IT DOES NOT WORK
+  Five decoders were written against the trained student. All failed:
+
+  1. SLIDING WINDOW + argmax over candidate end positions.
+     The score climbed MONOTONICALLY with window length (0.53, 0.75, 0.79,
+     0.86, 0.894) and never turned over, so argmax returned the longest
+     candidate. The deliberate س->ص error scored 0.894, the HIGHEST score in
+     its recording.
+
+  2. CTC Viterbi, scored by MEAN log-probability.
+     Confirmed EVERYTHING at every threshold from -1 to -5. The mean dilutes
+     a single bad phoneme: ten characters at -0.1 and one at -5.0 averages
+     to -0.55, barely distinguishable from a perfect -0.09.
+
+  3. CTC Viterbi, scored by WORST CHARACTER.
+     Ordering was right (correct -9.4 vs error -13.1) but calibration on
+     reference audio showed correct words spanning -2.4 to -14.2, so no
+     threshold separates. And Recording_4 -- a COMPLETELY WRONG VERSE --
+     scored -8.9/-7.7/-8.4, BETTER than most correct words.
+
+  4. KEYWORD-FILLER LIKELIHOOD RATIO
+     score = logP(expected chars) - logP(best free path), per frame. This
+     fixed the SCALE beautifully -- reference reciter median -0.096, p05
+     -0.772 -- but still did not separate: Recording_4 scored -0.18/-0.27/
+     -0.25, better than several correct recordings.
+
+  5. DURATION CAP from the manifest, on top of (4). Untested at handover.
+
+  THE DIAGNOSTIC OBSERVATION, and it explains all five:
+
+      Word 0 of Recording_5 aligned over 0.15-3.90s -- 3.75 SECONDS for one
+      word in a 6.23s recording, swallowing the next two words. The
+      constrained path parks in BLANK states, and blank is usually the
+      free-path winner too, so the constrained and filler scores rise by the
+      SAME amount and the ratio is unchanged. Extending across arbitrary
+      audio was FREE.
+
+*** THE ROOT CAUSE ***
+  THE STUDENT WAS TRAINED AS A VERIFIER AND USED AS A DETECTOR.
+
+  Every training window was a correct crop of exactly one word, cut at true
+  boundaries from the manifest, with ~150ms of context. The model was NEVER
+  shown:
+      - a window that does NOT contain the target word
+      - a window where the word is at an unknown offset
+      - a window containing part of a word, or two words
+      - anything it should reject
+
+  The CTC head in particular was an AUXILIARY LOSS on positives only. It
+  learned to emit the right characters GIVEN a correct crop. It never
+  learned to place a boundary or to reject.
+
+  So it cannot say NOT FOUND, and five decoder rewrites were attempts to
+  extract a capability the training never put there. Each fixed one symptom
+  and exposed the next.
+
+
+===============================================================================
+5. HOW THE MODEL SHOULD BE TRAINED FOR STREAMING
+===============================================================================
+
+This is the actual task for whoever picks this up. The architecture,
+corpus, teacher, recipes and evaluation harness all carry over. THE
+TRAINING DATA AND OBJECTIVE ARE WHAT MUST CHANGE.
+
+WHAT THE TRAINING SET NEEDS THAT IT DOES NOT HAVE
+
+  NEGATIVE WINDOWS -- windows that do not contain the target word at all.
+      Currently EVERY training window contains its own word. That single
+      fact is why the model cannot say "not here". Sources: a different
+      word's span, a span straddling a boundary, silence, another verse.
+
+  VARIABLE OFFSET AND CROP -- the word at different positions within the
+      window, with different amounts of leading and trailing context, and
+      sometimes only partially present. At inference the window START is the
+      cursor (roughly right) but the END is unknown and growing, so the
+      model must handle a target that is halfway through arriving.
+
+  A BACKGROUND / FILLER CLASS -- so "none of the expected words" is
+      something the model can OUTPUT, rather than something the decoder
+      approximates afterwards. This is the classical keyword-spotting
+      answer and it was being reconstructed at decode time in attempt (4).
+
+  BOUNDARY SUPERVISION -- so the model reports where the word ENDS rather
+      than the decoder searching for it. The manifest has true boundaries
+      for all 18,144 segments. A per-frame "is the word complete here"
+      target is the natural form.
+
+  DURATION AS A FEATURE, NOT A PATCH -- eight reciters have said every one
+      of these words, so the plausible duration range is known per word.
+      That belongs in training, not bolted on as a decode-time cap.
+
+THE OBJECTIVE
+  Frame-synchronous detection, not window classification. Per frame, the
+  model should emit something like:
+      p(the expected word has just completed here)
+  trained with positives at true word-end frames and negatives everywhere
+  else, plus the filler class. That is directly what the streaming loop
+  needs and it removes the search entirely.
+
+  CTC alignment can stay as an auxiliary loss -- it is genuinely useful for
+  boundaries -- but it MUST see negatives, or it repeats the current
+  failure.
+
+WHAT TO KEEP
+  - the distillation from v4's teacher. Six reciters cannot teach speaker
+    invariance from scratch (v4a proved that); the teacher learned it from
+    thousands of Tarteel voices. Distillation is how it transfers, and the
+    ablation shows it also supplies calibration that relative objectives
+    cannot.
+  - the recipe system in teacher.py. Deterministic regeneration means the
+    audio the student trains on is bit-identical to what the teacher scored.
+  - the artifact control from injector.py. Any new evaluation must report
+    the control false-positive rate FIRST.
+  - Husary and Minshawy held out.
+  - testset/ unchanged.
+
+THE LITERATURE TO START FROM
+  Jin et al., Interspeech 2024, "CTC-aligned Audio-Text Embedding for
+  Streaming Open-vocabulary Keyword Spotting". Their acoustic encoder is
+  155K PARAMETERS and competitive -- capacity is not the constraint here,
+  and the current 811K model is already oversized. They train with CTC plus
+  a multi-view metric loss, use in-batch negatives at BATCH 1024, compare by
+  COSINE SIMILARITY rather than a learned head, and pool at WORD level (their
+  ablation found character-level pooling the weakest of three).
+
+  Also relevant: keyword-filler models (the classical way to say "not
+  found"), and duration-penalised scoring (penalise a unit held longer than
+  expected -- which is exactly the 3.75s failure above).
+
+
+===============================================================================
+6. HARD-WON DETAILS THAT ARE NOT IN ANY PAPER
+===============================================================================
+
+Each of these was the difference between working and not working.
+
+  THE FORCED TASK PREFIX. Whisper's decoder always begins with
+  <|startoftranscript|><|ar|><|transcribe|><|notimestamps|>. Omitting it
+  makes the FIRST real token collapse for everyone -- a professional reciter
+  scored logP -15 on a word he recites perfectly.
+
+  WORST TOKEN, NOT MEAN. One wrong diacritic in an eight-token word barely
+  moves the mean but IS the error. Measured: سُبَاتًا correct 0.994 worst,
+  deliberate ص 0.000 worst. This lesson was learned in v4, WRITTEN DOWN, and
+  then ignored in v5's streaming attempt 2. Do not repeat it.
+
+  SILENCE TRIMMING. A pause before the learner starts gets absorbed into the
+  FIRST word's span. Measured: a 0.6s lead-in took a word from z=4 to z=16.
+  Without trimming, the embedding score for a correct recitation never
+  exceeded 0.091; with it, 0.875.
+
+  CLIPPED ONSETS. A learner who starts reciting before the recorder catches
+  up loses the first consonant, and the device flags a word they said
+  perfectly. Confirmed as the cause of one false flag.
+
+  zero_infinity=True IN CTC IS CORRECT FOR TRAINING AND WRONG FOR SCORING.
+  It turns an IMPOSSIBLE alignment (input shorter than the target) into a
+  loss of ZERO -- which, scored as -loss/len, is the BEST POSSIBLE SCORE. A
+  120ms window scored -0.00 and won the search.
+
+  A RANDOM MODEL MUST FAIL YOUR METRIC. An UNTRAINED head scored 0.993 on a
+  device-localization metric built in v4. Test this before trusting any
+  number.
+
+  ROWS MUST DIVIDE EVENLY. Eight reciters saying identical text cannot
+  produce a fractional row count. Caught two silent parse bugs.
+
+  SYNTHETIC TESTS KEPT PASSING WHILE REAL AUDIO FAILED. Every streaming
+  rewrite passed its unit tests and then failed on the recordings. The
+  recordings in recs/ are the only test that has been consistently
+  informative. Run them early.
+
+
+===============================================================================
+7. METRICS -- READ THIS BEFORE TRUSTING A NUMBER
+===============================================================================
+
+Three metrics were each trusted too far in turn:
+
+  corrupt<0.1      inflated by growing OVERCONFIDENCE. One checkpoint scored
+                   62.6% with correlation 0.271; a BETTER one scored 32%
+                   with 0.510. The rate was measuring confidence, not
+                   discrimination.
+  device top-1     an UNTRAINED model scored 0.993 on it, because the metric
+                   asked which of ~3 words in an ayah this is -- easy, and
+                   not what the device needs.
+  Pearson r        penalises a model whose ranking is fine but whose outputs
+                   are COMPRESSED. It made the no-distillation ablation look
+                   0.10 worse when it was only ~1.5pp worse on balanced
+                   accuracy.
+
+USE AUC for any model-vs-model comparison: rank-based, so threshold-free AND
+calibration-free. Use a THRESHOLD SWEEP (balanced accuracy at each cut
+point) when choosing an operating point. Report the CONTROL false-positive
+rate first, always.
+
+And: cross-check any headline number against a metric that fails
+differently, before believing it.
+
+
+===============================================================================
+8. WHAT IS NOT TRUE YET
+===============================================================================
+
+  ONE SPEAKER. Every uncontaminated result rests on one adult male voice.
+  One speaker is an anecdote.
+
+  CONTAMINATION. Tarteel fine-tuned on EveryAyah, the same corpus as this
+  reference library, so the reference reciters are likely IN the teacher's
+  training data. Held-out-reciter numbers are an upper bound.
+
+  NO REAL LEARNER ERRORS. The synthetic set's artifact control proves the
+  system is not detecting splice seams. It cannot prove the error taxonomy
+  matches what students actually do. QDAT (1500+ voices, correct and
+  incorrect recitation of three tajweed rules) is public and would help.
+
+  NO TEACHER HAS SEEN IT. Nobody has asked a Kaduna teacher what students
+  get wrong most, or whether the flags are pedagogically right.
+
+  NO HAUSA-ACCENTED DATA. The target users are Hausa speakers. Whether the
+  model handles that accent is completely unmeasured.
+
+  PI NUMBERS ARE ESTIMATED at 4-5x measured laptop CPU time, not measured on
+  hardware.
+
+  TWO LICENCES OPEN in ATTRIBUTION.txt: everyayah audio redistribution, and
+  Tanzil text conditions. Both must be resolved before any field deployment.
+
+  TRAIN/VAL OVERLAP in v5: both splits were drawn from the same pool of
+  ayah-reciter pairs with replacement, so ~49% of pairs appear in BOTH. Val
+  numbers are inflated; holdout is clean. Partition the key list BEFORE
+  drawing when regenerating.
+
+
+===============================================================================
+9. FILE MAP
+===============================================================================
+
+  v4 (the working device)
+    device.py            runtime + local HTTP server, offline
+    static/index.html    the learner's interface
+    textscore.py         forced-decoding scorer (the teacher)
+    reftext.py           Qur'an text + the three orthography rules
+    baseline.py          v3 duration scorer, still the fallback
+
+  v5 (the streaming attempt)
+    teacher.py           distillation target generation, recipe system
+    student.py           the 811K student: encoder, heads, training
+    ctcalign2.py         streaming decoder, attempt 4-5 (likelihood ratio)
+    ctcalign2_worstchar.py   attempt 3, kept for the record
+    stream.py            attempt 1 (sliding window), kept for the record
+    calibrate.py         scale calibration against reference reciters
+    ctc_score.py         head comparison and lambda sweep
+
+  data
+    reference_library/   audio + timings + attribution
+    manifest_full.csv    18,144 verified word segments
+    texts/               six Tanzil variants
+    testset/             2,000 labelled synthetic items -- DO NOT REGENERATE
+    recs/                seven learner recordings + descriptions.txt
+
+  documentation
+    v4.txt               why v4 looks the way it does
+    v5_notes.txt         v5 results, ablations, and four reversals
+    project_plan.txt     the v5 plan as originally written
+    handover.txt         this file

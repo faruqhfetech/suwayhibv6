@@ -1,0 +1,535 @@
+SUWAYHIB -- CURRENT STATE OF THE REPOSITORY
+Written at the end of the v4 build. Explains what every file is, what it
+does, whether it is live or superseded, and how the pieces connect.
+
+Read v4.txt for WHY the system looks like this. This file is WHAT is on
+disk.
+
+
+###############################################################################
+PART 1 -- THE SHORT VERSION
+###############################################################################
+
+The device is four files:
+
+    device.py            the runtime and HTTP server
+    static/index.html    the learner's interface
+    textscore.py         the scorer: forced decoding against verse text
+    reftext.py           the Qur'an text, prepared so the model accepts it
+
+Everything else is either (a) the corpus and evaluation work that produced
+the numbers justifying those four files, or (b) a superseded approach kept
+for the write-up.
+
+To run it:
+
+    python device.py serve --lib reference_library --manifest manifest_full.csv
+    -> http://127.0.0.1:8080
+
+
+###############################################################################
+PART 2 -- THE LIVE SYSTEM
+###############################################################################
+
+-------------------------------------------------------------------------------
+device.py                                                          [LIVE, CORE]
+-------------------------------------------------------------------------------
+The device itself: a local HTTP server plus the practice loop. No network
+calls, no telemetry, no request logging.
+
+  Endpoints
+    GET  /                       serves static/index.html
+    GET  /api/verses             surah/ayah list the library can play
+    GET  /api/reference/S/A      the reference reciter's audio for a verse
+    GET  /api/word/S/A/W         ONE word of the reference, padded for playback
+    GET  /api/clip?id=&a=&b=     a span of the learner's own recording
+    POST /api/attempt/S/A        audio in -> decision out
+    POST /api/leave              drops the learner's audio from memory
+
+  The loop
+    play reference -> learner recites -> score
+      nothing flagged  -> silence, go again
+      one word flagged -> play the LEARNER's version of that word, then the
+                          REFERENCE version, twice. No verdict spoken.
+      all words fail   -> "that sounds like a different verse"
+      after 3 attempts -> "practice this one with your teacher"
+
+  Key internals
+    Library          reference audio + word timings, with a small LRU cache
+    State            learner audio, IN MEMORY ONLY, dropped when the verse is
+                     left. Never written to disk.
+    evaluate()       runs the scorer, decides what (if anything) to say
+    silence trim     strips leading/trailing near-silence before scoring.
+                     Without it a pause before the learner starts is absorbed
+                     into the FIRST word's span and scored as part of it.
+    PLAYBACK_PAD_MS  80ms padding for playback, so an isolated word sounds
+                     whole. Scoring uses NO padding -- different job,
+                     different policy.
+
+  Flags
+    --scorer-device cpu|cuda   cpu is the realistic setting
+    --no-scorer                forces v3 duration-only scoring, for A/B
+    --reciter NAME             which voice plays the reference
+
+-------------------------------------------------------------------------------
+textscore.py                                                       [LIVE, CORE]
+-------------------------------------------------------------------------------
+The scorer. Loads whisper-base-quran and RefText, and answers one question
+per word: how probable is this token, given this audio?
+
+  TextScorer.score(audio, surah, ayah)
+      -> per word: mean probability, WORST-token probability, and which
+         token was weakest
+  TextScorer.flag(...)
+      -> the device's decision: nothing, one word, or wrong verse
+
+  Why worst-token and not mean
+      One wrong diacritic in an eight-token word barely moves the mean but IS
+      the error. Measured: سُبَاتًا correct 0.994 worst, deliberate ص 0.000.
+
+  The forced task prefix
+      Whisper's decoder always starts with
+      <|startoftranscript|><|ar|><|transcribe|><|notimestamps|>
+      Omitting it makes the FIRST real token collapse for everyone -- a
+      professional reciter scored logP -15 on a word he recites perfectly.
+      The prefix positions are then DROPPED from scoring; they are forced and
+      carry no signal.
+
+  Threshold: 0.10, global, no per-word calibration. Measured margins:
+      reference reciter   0.991 - 1.000   (160 words, median 1.0000)
+      learner, correct    0.51  - 1.00
+      deliberate error    0.000
+      wrong verse         0.000  (every word)
+
+  CLI
+    python textscore.py score --audio X.m4a --ref 78 9 --device cuda
+    python textscore.py calibrate --device cuda --n 40
+      calibrate is a SANITY CHECK, not a tuning step. It reports what
+      fraction of a correct reciter's words fall below threshold. Should be 0.
+
+-------------------------------------------------------------------------------
+reftext.py                                                         [LIVE, CORE]
+-------------------------------------------------------------------------------
+Loads the Qur'an text and prepares it so the model's probabilities reflect
+PRONUNCIATION rather than SPELLING. Three rules, all derived by measurement:
+
+  1. Use quran-simple-plain. Scoring a professional reciter against every
+     Tanzil variant: simple-plain 0.87, simple 0.65, uthmani 0.25, the -min
+     variants 0.00. Tarteel fine-tuned on imlaei script.
+
+  2. Strip U+0670 (SUPERSCRIPT ALEF). This ONE codepoint caused 9 of 11
+     mismatched ayahs -- every alif-maqsura ending and الرَّحْمَٰن.
+     Took the reciter from 11/60 failures to 2/60.
+
+  3. Strip the basmala from ayah 1 of every surah except 1 and 9. Tanzil
+     prepends it; the audio does not contain it.
+     The prefix is taken FROM THE TEXT (verse 1:1 IS the basmala) rather than
+     hand-typed. Two hand-typed attempts failed because the superscript alef
+     does not survive a shell paste reliably.
+
+  Result after all three: mean worst-token 0.9994, 0 of 60 ayahs below 0.5.
+
+  Diacritics are REQUIRED: simple-clean and all harakat-stripped variants
+  scored exactly 0.000.
+
+  CLI
+    python reftext.py show 78 1        confirm "basmala stripped from: 112"
+    python reftext.py check --device cuda --n 60
+
+-------------------------------------------------------------------------------
+static/index.html                                                  [LIVE, CORE]
+-------------------------------------------------------------------------------
+The learner's interface. One file, no build step, no CDN, no external fonts.
+
+  Surah/ayah pickers, a Listen button, a Recite button, three attempt dots,
+  and a word strip that lights up the flagged word.
+
+  The state machine is ONE variable (`phase`: idle / ready / recording /
+  working / done). Every path ends in setPhase(), and setPhase() alone
+  touches button state. This replaced four independent flags that produced
+  five different ways to strand a button.
+
+  A `session` counter increments on every verse change; nine async
+  continuations check it before writing to the UI, so a slow request or a
+  long replay cannot post results for a verse the learner already left.
+
+  Recording note: MediaRecorder's mimeType is captured BEFORE stop(),
+  because onstop fires asynchronously after `rec` is cleared.
+
+-------------------------------------------------------------------------------
+device_config.json                                                       [LIVE]
+-------------------------------------------------------------------------------
+Runtime settings. The ones that matter now:
+
+    text_threshold   0.10                        word probability floor
+    text_model       whisper-base-quran          NOT tiny -- see below
+    text_file        texts/quran-simple-plain.txt
+    detect_threshold 0.364                       v3 duration path (fallback)
+
+  Stale keys from the abandoned embedding approach (emb_threshold, emb_run,
+  emb_model, emb_layer, use_embeddings) may still be present. They are
+  ignored.
+
+-------------------------------------------------------------------------------
+texts/                                                                   [LIVE]
+-------------------------------------------------------------------------------
+Six Tanzil script variants, 6,236 lines each.
+
+    quran-simple-plain.txt   <- THE ONE IN USE
+    quran-simple.txt
+    quran-simple-min.txt
+    quran-simple-clean.txt
+    quran-uthmani.txt
+    quran-uthmani-min.txt
+
+  The other five are kept because the comparison across them IS a result.
+
+  LICENCE: Tanzil has conditions about unmodified distribution. Reading them
+  locally is fine; shipping them on an SD card is not yet cleared. See
+  ATTRIBUTION.txt. Rule 1 makes this question live.
+
+-------------------------------------------------------------------------------
+reference_library/                                                       [LIVE]
+-------------------------------------------------------------------------------
+    8 reciter directories   ayah-level MP3s, surahs 78-114 (564 each)
+    timings/                quran-align JSON, all 6,236 ayahs
+    ATTRIBUTION.txt         SOURCES AND OPEN LICENCE QUESTIONS
+    excluded_ayahs.json     10 ayahs excluded, each with a reason
+    verification_report.txt
+
+  Word timings are NOT from everyayah. everyayah hosts ayah-level audio only.
+  The timings come from cpfair/quran-align, which ran a forced aligner over
+  those recordings -- machine estimates, which is why they needed verifying.
+
+  OPEN: everyayah audio redistribution is unresolved. Research use is one
+  thing; shipping it on a distributed SD card is another.
+
+-------------------------------------------------------------------------------
+manifest_full.csv                                                        [LIVE]
+-------------------------------------------------------------------------------
+18,144 verified word segments:
+    reciter, surah, ayah, word_idx, start_ms, end_ms,
+    multiword_segment, audio_path
+
+  557 of 564 ayahs survived verification. The device reads this to know which
+  verses it can offer, and to get word spans for playback.
+
+  multiword_segment=1 marks words the aligner could not split apart; those
+  words cannot be isolated for playback. Only 2 in the whole corpus.
+
+manifest_full_suspects.csv
+  570 words whose duration disagrees with the other reciters. A triage
+  queue, not a defect list -- forced alignment always has a tail. Used to
+  keep dubious segments out of the injector's ground truth.
+
+
+###############################################################################
+PART 3 -- CORPUS AND EVALUATION  (produced the numbers, not run at runtime)
+###############################################################################
+
+-------------------------------------------------------------------------------
+inventory.py                                                  [NOT IN LISTING]
+-------------------------------------------------------------------------------
+NOTE: this file is missing from the current directory. It built
+manifest_full.csv. Worth restoring from v3 if the library is ever extended
+to the full Qur'an, because the manifest -- not the audio -- is what gates
+which verses the device offers.
+
+  Subcommands: probe (inspect timing format), verify (checks + manifest),
+  extract (cut one word from every reciter, for ear-checking).
+
+  Checks it runs: monotonic timings, segments inside the audio, word-count
+  agreement ACROSS reciters, word-index coverage (gaps and duplicates),
+  implausibly short words, and cross-reciter duration outliers.
+
+  The check that earned its keep: ROWS MUST DIVIDE EVENLY BY RECITER COUNT.
+  Eight reciters saying identical text cannot produce a fractional row count.
+  That one assertion caught two separate parse bugs that passed every other
+  structural test -- an inclusive/exclusive index error, and reciters with
+  missing word indices.
+
+-------------------------------------------------------------------------------
+injector.py                                                          [ARCHIVAL]
+-------------------------------------------------------------------------------
+Builds the synthetic error test set. Not needed at runtime; needed if the
+test set is ever rebuilt.
+
+  Error types, in three tiers:
+    structural  word_deletion, word_repetition, truncation
+    prosodic    madd_shortening, madd_lengthening
+    segmental   word_substitution, near_miss_substitution
+
+  THE ARTIFACT CONTROLS -- the reason these numbers are credible:
+    1. equal-power crossfades at every splice (11x less discontinuity than
+       naive concatenation)
+    2. RMS matching, so inserted material does not stand out by loudness
+    3. a CONTROL class: audio cut and rejoined AT THE SAME POINT, no error,
+       labelled negative. If a model flags these it is detecting EDITS, not
+       mispronunciation. Final measured gap: -0.007. Passed three times.
+
+  Donors come from the SAME reciter, so a substitution cannot be spotted by
+  noticing the voice changed. near_miss donors are duration-matched to within
+  15%, stripping the duration cue and leaving only phonetic content.
+
+testset/
+  2,000 labelled items: audio/, labels.jsonl, meta.json.
+  DO NOT REGENERATE. It is the anchor that makes v3 and v4 comparable.
+
+-------------------------------------------------------------------------------
+baseline.py                                                    [LIVE, FALLBACK]
+-------------------------------------------------------------------------------
+The v3 scorer, and still the fallback when --no-scorer is passed. The device
+also uses its DTW alignment to get word spans for replay.
+
+  Method: DTW-align the learner against reference recitations by OTHER
+  reciters, map the reference's known word boundaries through the warp path,
+  and score each word on duration deviation and DTW cost -- all per-ayah
+  normalised, so speaker tempo cancels out.
+
+  v3 results (2,000 items):
+    detection AUPRC 0.901 (baseline 0.700), holdout 0.915
+    artifact control gap -0.007
+    top-1 localization 0.543
+    truncation 0.944  deletion 0.758  repetition 0.344
+    madd 0.380-0.388  substitution 0.360  near-miss 0.250
+
+  A LESSON EMBEDDED IN THIS FILE: detection and localization need DIFFERENT
+  statistics. Per-ayah z-scores are right for "which word stands out from its
+  siblings" and useless for "is anything wrong at all" -- a z-score is
+  scale-free, so every ayah has a max-z word whether or not an error exists,
+  and max-of-n z mostly tracks word count. Using z for detection scored 0.704,
+  BELOW the 0.700 baseline. Absolute magnitudes scored 0.901.
+
+  Best single feature: mean_log_dev, 0.918 holdout AP alone, against 0.925
+  for logistic regression over seven features. Seven thousandths was not
+  worth a training dependency on a Pi, so v3 ships the single feature.
+
+scores_full.jsonl / scores_v3_fixed.jsonl
+  v3 scores over the test set. The "_fixed" run is after a clamping bug fix;
+  the numbers were essentially identical (0.901 both times), which was worth
+  knowing rather than assuming.
+
+
+###############################################################################
+PART 4 -- THE ABANDONED APPROACH  (kept for the write-up)
+###############################################################################
+
+These implement contrastive acoustic word embeddings. The approach was built,
+measured, and abandoned. The code is kept because the NEGATIVE RESULT is the
+most transferable thing in this repository.
+
+    pairs.py        mines positive/negative word pairs from the manifest
+    features.py     frozen pretrained speech features (+ the layer probe)
+    encoder.py      from-scratch log-mel encoder, contrastive or classify head
+    head.py         small trainable head over frozen features
+    embscore.py     gallery, centroids, spreads, per-word thresholds
+    gallery.py      inspects a word's reference gallery when z looks wrong
+    embeddings.npz  17,737 word embeddings (9.1 MB)
+    word_thresholds.json  per-word leave-one-out thresholds
+    pairs/          mined pairs and the word inventory
+    runs/           trained checkpoints
+    feats_tiny/     891 MB frozen feature cache
+    cache/          1.4 GB decoded word audio
+
+WHY IT FAILED
+  From-scratch encoder: val AP 0.54 (unseen words, seen voices) but holdout
+  AP 0.064 (unseen VOICES). It learned words and not speaker invariance.
+
+  The reason, and it is the useful finding: speaker-invariance work in the
+  literature trains on HUNDREDS TO THOUSANDS of speakers. This corpus has SIX.
+  With six voices there are not enough directions of speaker variation to
+  separate "voice" from "word", so the model encodes voice -- because with
+  six voices, voice IS a reliable cue. No architecture or loss change fixes
+  a data limit.
+
+  Frozen pretrained features helped the representation. Word AP on held-out
+  voices, against ~0.0017 chance:
+      DistilHuBERT        0.011   (only 2 layers; curve still rising at top)
+      whisper-base        0.108
+      whisper-base-quran  0.143   (same size as whisper-base -- the delta is
+                                   Qur'anic fine-tuning)
+  But the trained head still produced z scores straddling per-word thresholds
+  ranging 5.6 to 23.4, with correct recitation and real errors overlapping.
+
+  A SECOND LESSON: an UNTRAINED head scored 0.993 on the device-localization
+  metric we had built for it. The metric was asking which of ~3 words in an
+  ayah this is -- easy, and not what the device needs. ALWAYS CHECK THAT A
+  RANDOM MODEL FAILS YOUR METRIC before trusting a number.
+
+feats_tiny/ (891 MB) and cache/ (1.4 GB) can be deleted. Nothing live reads
+them.
+
+
+###############################################################################
+PART 5 -- DIAGNOSTIC AND EXPERIMENT SCRIPTS
+###############################################################################
+
+decprobe.py     Single-recording deep dive. Free transcription, then
+                per-token forced-decode probabilities with a bar chart, then
+                the per-word rollup. This is the script that found forced
+                decoding worked, and the one that exposed the missing task
+                prefix.
+                  python decprobe.py --ref-word 78 6 --reciter Husary \
+                      --model whisper-base-quran --device cuda \
+                      --reference "..."
+
+decbatch.py     Batch version. Reads recordings.txt, scores every recording
+                AND a professional reciter against the same text, so every
+                row carries its own control. Prints a separation summary.
+                  python decbatch.py --spec recordings.txt \
+                      --model whisper-base-quran --device cuda
+
+qurantext.py    The variant comparison that produced rule 1. Scores a
+                reciter against every text file x normalisation level.
+                Superseded by reftext.py for runtime use, kept because the
+                comparison is a result.
+
+gallery.py      Inspects a word's reference gallery -- rendition count,
+                durations, distance from centroid. Written to diagnose why
+                one word scored z=16. Belongs to the abandoned approach.
+
+recordings.txt  Spec for decbatch: "file | surah ayah | note".
+probe.log       Saved output of the feature-extractor layer probes.
+helper_run1.txt Scratch notes.
+run.py          Scratch.
+
+Recording*.m4a  Seven learner recordings (one voice). These are the ONLY
+                uncontaminated evaluation data in the project: the reference
+                reciters are likely inside Whisper's fine-tuning set, this
+                voice is not. Includes matched correct/incorrect pairs --
+                Recording_5 (correct) and Recording_6 (deliberate س->ص) are
+                the strongest single result: 0.994 vs 0.000 on the same word.
+
+
+###############################################################################
+PART 6 -- DOCUMENTATION
+###############################################################################
+
+v4.txt                        WHY the system looks like this. Read first.
+                              Nine sections: results, use cases, the four
+                              approaches and why three were not enough, the
+                              model choice, the text rules, the
+                              implementation details that decided whether it
+                              worked, what the device says, what is NOT yet
+                              true, and next steps.
+
+v4_planning_superseded.txt    The plan BEFORE building. Proposed contrastive
+                              embeddings. Kept deliberately: the gap between
+                              the plan and the outcome is part of the record.
+
+current.txt                   This file.
+
+
+###############################################################################
+PART 7 -- HOW THE LIVE PIECES CONNECT
+###############################################################################
+
+    texts/quran-simple-plain.txt
+             |
+             v
+        reftext.py  ------- 3 rules -------> prepared verse text
+             |                                      |
+             v                                      v
+    reference_library/  +  manifest_full.csv    textscore.py
+             |                    |            (whisper-base-quran,
+             |                    |             forced decoding)
+             v                    v                 |
+          device.py  <------------+-----------------+
+             |            (Library: audio, spans, playback)
+             v
+      static/index.html
+             |
+             v
+        the learner
+
+  A single attempt:
+    1. browser POSTs webm audio to /api/attempt/S/A
+    2. device decodes it, trims silence
+    3. textscore forced-decodes it against the prepared verse text
+    4. any word below 0.10 is flagged; the weakest is the target
+    5. baseline.py's DTW supplies the learner's span for that word
+    6. browser plays learner's word, then reference word twice
+    7. no verdict is spoken -- the replay is the message
+
+
+###############################################################################
+PART 8 -- MEASURED FACTS
+###############################################################################
+
+MODEL CHOICE  (settled by measurement, not preference)
+                          tiny        base
+    params                37.8M       72.6M
+    CPU per attempt       0.22s       0.48s
+    RTF                   0.04        0.08
+    correct recitation    UNSTABLE    stable
+
+  Seven takes of 78:2, all correct: tiny scored عَنِ at 0.29, 0.05, 0.00,
+  0.02, 0.69, 0.91, 0.03 -- the scores were not tracking the recitation.
+  Base gave 0.51 and 0.54 on separate sessions of the same verse.
+  A device on tiny would flag correct recitation about half the time, and
+  inconsistently, which destroys trust faster than being wrong in a stable
+  way. Base is the minimum viable model.
+
+  This also settles the hardware floor: base needs more than 1 GB with a
+  PyTorch runtime, so the $45 Pi 5 1GB is out unless int8/ONNX brings it
+  under the ceiling.
+
+DEPLOYMENT  (laptop CPU measured; Pi 4 estimated at 4-5x)
+    memory        ~300 MB against 4 GB
+    per attempt   0.48s CPU  ->  ~2-2.5s on a Pi
+    startup       13.6s once; load at boot
+    network       none, ever
+
+  Forced decoding is a SINGLE forward pass -- the tokens are known, so there
+  is no autoregressive generation and no beam search. That is why scoring is
+  cheaper than transcription.
+
+A WORKED EXAMPLE -- the system was right and we were wrong
+  78:9 نَوْمَكُمْ scored 0.000 across three takes. We suspected a model
+  defect: the reference reciter scores 0.982 on the same word and text.
+  Reciting it more deliberately moved it to 0.13, then to 0.99. The model
+  had been correct every time.
+
+
+###############################################################################
+PART 9 -- WHAT IS NOT YET TRUE
+###############################################################################
+
+  ONE SPEAKER. Every uncontaminated result rests on one adult voice.
+
+  CONTAMINATION. Tarteel fine-tuned on EveryAyah, the same corpus as this
+  reference library, so the reference reciters are likely IN the model's
+  training data. Held-out-reciter numbers are an upper bound.
+
+  NO REAL LEARNER ERRORS. The artifact control proves the system is not
+  detecting splice seams. It cannot prove the error taxonomy matches what
+  students actually do. QDAT (1500+ voices, correct and incorrect recitation
+  of three tajweed rules) is public and would help.
+
+  NO TEACHER HAS SEEN IT. Nobody has asked a Kaduna teacher what students
+  get wrong most.
+
+  PI NUMBERS ARE ESTIMATED, not measured on hardware.
+
+  557 VERSES, NOT 6,236. The TEXT covers the whole Qur'an already; the AUDIO
+  is surahs 78-114 only. Extending it needs the full everyayah download AND
+  a re-run of inventory.py to rebuild the manifest -- audio alone will not
+  extend the verse list. Expect ~70-80 exclusions at full scale, and check
+  the longest verses (2:282) against Whisper's 30-second encoder window.
+
+  TWO LICENCES OPEN: everyayah audio redistribution, and the Tanzil text
+  conditions. Both must be resolved before any field deployment.
+
+
+###############################################################################
+PART 10 -- SAFE TO DELETE
+###############################################################################
+
+    cache/          1.4 GB   decoded word audio, abandoned pipeline
+    feats_tiny/     891 MB   frozen features, abandoned pipeline
+    __pycache__/
+    run.py, helper_run1.txt  scratch
+
+  KEEP embeddings.npz, word_thresholds.json, pairs/ and runs/ only if the
+  negative result needs to be reproducible for the write-up. Nothing live
+  reads them.

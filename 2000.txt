@@ -1,0 +1,48 @@
+(wslenv) faruqhfe@hfe:/mnt/c/Users/faruq/Desktop/AcademicsatCMU/Semester3/aisd/suwayhibv6$ python code/score.py testset --ckpt runs/head/best.pt --by-error-type
+loaded runs/head/best.pt  epoch 18  val 0.5281
+  layers [14, 15, 16, 17, 18, 19]  dim 128  blocks 8  params 2.15M
+Loading weights: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████| 422/422 [00:00<00:00, 3208.61it/s]
+[transformers] Wav2Vec2Model LOAD REPORT from: facebook/wav2vec2-xls-r-300m
+Key                          | Status     |  | 
+-----------------------------+------------+--+-
+quantizer.weight_proj.bias   | UNEXPECTED |  | 
+project_q.weight             | UNEXPECTED |  | 
+quantizer.weight_proj.weight | UNEXPECTED |  | 
+project_hid.weight           | UNEXPECTED |  | 
+quantizer.codevectors        | UNEXPECTED |  | 
+project_hid.bias             | UNEXPECTED |  | 
+project_q.bias               | UNEXPECTED |  | 
+
+Notes:
+- UNEXPECTED:   can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+encoder: facebook/wav2vec2-xls-r-300m (315M params, 24 layers, dim 1024) on cuda fp16
+======================================================================
+ARTIFACT CONTROL (report first, always):
+  dev       30/461 control_seam items flagged AT THE SPLICE POINT (6.5%) -- should be near 0%
+  holdout   4/139 control_seam items flagged AT THE SPLICE POINT (2.9%) -- should be near 0%
+  (total items scored: 2000, cross-check against n below)
+
+DEV  (n=1470)
+  TP 896  FN 113  FP 30  TN 431
+  precision 0.9676  recall 0.8880  F1 0.9261
+
+HOLDOUT  (n=530  -- Husary/Minshawy, genuine hold-out)
+  TP 346  FN 45  FP 4  TN 135
+  precision 0.9886  recall 0.8849  F1 0.9339
+
+Note: this F1 is word-level flag detection on OUR synthetic
+corruptions, not IqraEval's phoneme-level TA/FR/FA/TR F1 on
+QuranMB.v2 -- the two are not comparable numbers, only
+analogous ones. See module docstring.
+
+by error_type:
+  clean                     400/400  (100.0%)
+  control_seam              166/200  (83.0%)
+  madd_lengthening          178/200  (89.0%)
+  madd_shortening           231/240  (96.2%)
+  near_miss_substitution    198/200  (99.0%)
+  truncation                160/160  (100.0%)
+  word_deletion             236/240  (98.3%)
+  word_repetition            44/160  (27.5%)
+  word_substitution         195/200  (97.5%)
+(wslenv) faruqhfe@hfe:/mnt/c/Users/faruq/Desktop/AcademicsatCMU/Semester3/aisd/suwayhibv6$ 

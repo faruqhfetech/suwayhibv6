@@ -1,0 +1,14 @@
+{
+  "alias": {},
+  "derived_from": {
+    "dataset": "IqraEval/Iqra_train",
+    "sentences": 1999,
+    "pairs": 65323
+  },
+  "min_confidence": 0.9,
+  "ambiguous": [
+    "U",
+    "II",
+    "UU"
+  ]
+}

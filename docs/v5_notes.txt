@@ -1,0 +1,628 @@
+SUWAYHIB v5 -- NOTES
+Working notes, not the plan. project_plan.txt is the committed design;
+this file is where ideas get written down before they're decided.
+
+
+===============================================================================
+ON NOVELTY -- WHERE IT ACTUALLY IS
+===============================================================================
+
+Asked directly whether v5 has novelty compared to v4. Honest answer: partly,
+and not evenly distributed across the idea.
+
+NOT NOVEL
+  Teacher-student distillation. Standard technique. Nobody would call
+  "distill Whisper into a smaller verifier" a new method on its own.
+
+NOVEL: THE REASON FOR DISTILLING, NOT THE TECHNIQUE ITSELF
+  Most distillation work assumes you WANT a smaller model and distills for
+  speed/cost. Here the reason is different: v4a already showed, with a
+  number, that six speakers cannot teach speaker invariance from scratch
+  (holdout AP 0.064). Distillation isn't chosen for efficiency -- it's
+  chosen because there is no other way to get invariance into a small model
+  given the data available. That's a specific, evidenced rationale, not a
+  default choice.
+
+  *** REVISED AFTER THE ABLATION -- see "THE ABLATION" section below. ***
+  The rationale above was the MOTIVATION for choosing distillation, and it
+  remains an honest account of why the choice was made. But it is NOT what
+  the teacher turned out to contribute. The ablation shows both models
+  transfer to unseen reciters comparably; what distillation supplies is an
+  ABSOLUTE SCALE (calibration), because the metric loss only constrains
+  relative ordering and CTC only sees positives, so nothing else anchors
+  what a score should mean.
+
+  The claim to make is therefore: "distillation from a well-generalising
+  teacher supplies CALIBRATION that relative objectives cannot". NOT
+  "distillation transfers speaker invariance" (the ablation killed that),
+  and NOT "worth ~0.10 correlation" as a capability claim (the threshold
+  sweep showed that gap was calibration; on balanced accuracy the
+  no-distill model is marginally better at 81.8% vs 79.9%).
+
+  What survives is narrow and deployment-oriented: the distilled model
+  produces a score that MEANS something at a natural threshold, which the
+  purely relative objectives cannot produce. That is worth having for a
+  device. It is not a better model.
+
+NOVEL IF IT WORKS: THE REFRAMING, NOT THE MODEL SIZE
+  "Does the expected text appear in this audio", combined with the strictly
+  sequential wait-and-restart pipeline (section 5 of project_plan.txt), is a
+  genuine systems decomposition. The Qur'an CAPT literature is GOP-and-
+  forced-alignment almost universally. Nobody there frames it as streaming
+  detection with a stall-and-repeat recovery loop.
+
+  THE ACTUAL THESIS, sharpened after the HMM conversation below:
+  the closed-vocabulary streaming reframing is the right abstraction for
+  this task, and MULTIPLE MODEL CLASSES can fill it in. Whisper forced-
+  decoding fills it in expensively (v4). A distilled verifier fills it in
+  cheaply (v5, hoped). An HMM might fill it in almost for free (untested).
+  That is a better thesis for a systems-design course than "here is a
+  smaller model" -- it is "here is the right way to decompose the problem,
+  and here is what happens when different components are plugged into that
+  decomposition."
+
+NOVEL EITHER WAY: THE COMPARISON ITSELF
+  A matched-accuracy, matched-corpus comparison between a general
+  fine-tuned ASR decoder and a small distilled verifier, on the same
+  held-out speakers, is useful regardless of which wins. Nobody has
+  published that specific comparison for this task.
+
+WHAT WOULD MAKE IT FEEL THIN
+  If the held-out-reciter check (project_plan.txt section 9, step 3) fails
+  and the project pushes forward without engaging the failure. The result
+  becomes "we tried something, it didn't clearly work, here's a system
+  anyway" -- coursework, but it loses what made v3->v4 compelling: a
+  DIAGNOSED result, not just an attempted one.
+
+
+===============================================================================
+THE HMM / SMALL-MODEL PRIOR  -- worth taking seriously, not a digression
+===============================================================================
+
+Raised in passing ("even an HMM can be useful enough for this") and it is
+actually load-bearing, not a tangent.
+
+THE ARGUMENT
+  An HMM, or a small CTC/keyword-spotting model, is BUILT for exactly this
+  task: bounded vocabulary, known sequence, "does this state sequence
+  explain this audio." That is the classical formulation of keyword
+  spotting and forced alignment from before end-to-end seq2seq models took
+  over. It is a much better structural prior for this task than a general
+  seq2seq decoder (which is what whisper-base-quran is).
+
+  If a simple model with strong inductive bias for closed-vocabulary
+  sequential matching does the job, that is evidence FOR the closed-
+  vocabulary reframing, not against the neural student. It says the task
+  does not need a large model's flexibility -- it needs the right
+  structural assumptions matched to the problem.
+
+PROPOSED USE: A CHEAP BASELINE, TRIED BEFORE THE NEURAL STUDENT
+  A small acoustic model (GMM-HMM style, or a tiny CTC model) explicitly
+  modelling "expected word sequence, allow skips, allow repeats, score
+  frame-by-frame fit."
+
+  If it gets most of the way there, the 15M distilled verifier has to beat
+  THAT, not just beat nothing -- a much more honest bar.
+
+  If the HMM alone is competitive, that is a genuinely interesting finding
+  in its own right: the task was solvable with much older technology once
+  framed correctly, and the interesting content of v5 is the PIPELINE (the
+  closed-vocabulary decomposition, the sequential wait-and-restart
+  recovery), not the model size.
+
+STATUS: not yet decided whether this is a parallel track or stays as a
+"worth remembering" note. Revisit before committing engineering time to the
+neural student -- it may be the cheaper first experiment, and a fast
+negative or positive result from it changes how much distillation work is
+actually justified.
+
+
+===============================================================================
+TEACHER TARGET EXTRACTION -- RESULTS, AND THE madd_long QUESTION
+===============================================================================
+
+Ran extract at n=4000 (train), n=4000 (val, seed 2), n=1000 (holdout, the
+two held-out reciters). Positive rate stable at ~12% across all three --
+train/val/holdout are comparable samples.
+
+FOUR OF SIX CORRUPTION TYPES: CLEAN, STABLE, CONFIRMED ON HOLDOUT
+  deletion, duration_match, random_word, same_ayah all sit at median 0.0000
+  with p90 under ~0.002 in EVERY split, including holdout. The teacher is
+  not fooled by same-voice, matched-duration substitutions even on unseen
+  reciters. Strong, learnable signal to distill from.
+
+  IMPORTANT DISTINCTION, stated explicitly because it is easy to conflate:
+  this confirms the TEACHER discriminates well on synthetic corruptions. It
+  does NOT confirm distillation works -- no student has been trained yet.
+  The actual test is whether a small student trained on this data
+  reproduces the discrimination on targets_holdout.jsonl. That is the
+  project_plan.txt step 3 gate, still unrun.
+
+madd_long IS BROKEN, NOT NOISY
+  Median target on the "stretched word" case: 0.40 (train, n=230), 0.14
+  (val, n=232), 0.82 (holdout, n=68). High and inconsistent across every
+  split, WORSE on holdout. This is not the n=4 pilot's small-sample noise --
+  it reproduces at real sample sizes.
+
+  WORKING HYPOTHESIS: stretching a word 2-4x may just sound like a slow,
+  deliberate reciter to the teacher, not an error. The reference reciters
+  already vary hugely in tempo (Husary is notably slow), so "read this word
+  very slowly" and "elongated this word incorrectly" may be acoustically
+  close from the model's point of view.
+
+  SUPPORTING EVIDENCE FROM v3: v3's madd_lengthening recall was ALSO only
+  0.380 (project_plan.txt / current_v3.txt Part 3). Two different systems,
+  same weak spot. That is either a real property of the task (pace-based
+  elongation errors are just hard to catch by acoustic modelling alone) or
+  a shared blind spot in how both systems were built to look for it.
+
+madd_short IS WEAKER BUT USABLE
+  Median near 0, but wide p90 (0.33-0.99 across splits) -- a meaningful
+  fraction of examples do not drop. Possibly the same "sounds like a fast
+  reciter" explanation, inverted.
+
+DECISION POINT -- NOT YET MADE, RETURN TO THIS BEFORE FINALISING THE
+TRAINING MIX:
+  do we FIX madd_long (reweight it down in the training loss, or push the
+  stretch factor to something unambiguous so the teacher is forced to drop
+  its score), OR do we ACCEPT that pace-based elongation detection is weak
+  by nature -- matching v3's own finding -- and let the student inherit that
+  same known limitation rather than over-engineering around a case that may
+  not be fixable with this teacher at all.
+
+  Leaning note (not a decision): if v3 independently found the same
+  weakness with a completely different method, that argues for "accept and
+  document" over "fight it" -- but worth testing whether a more extreme
+  stretch factor changes the picture before concluding that.
+
+
+===============================================================================
+RESULTS -- THE STUDENT, AND WHY THE FIRST ARCHITECTURE WAS WRONG
+===============================================================================
+
+HEADLINE (holdout = Husary + Minshawy, never seen in training)
+
+    architecture                      params   holdout r   corrupt<0.1
+    BCE on a scalar, width 256          1.0M      0.561        32%
+    BCE on a scalar, width 512          3.8M      0.618        44%
+    CTC + metric + distillation         811K      0.690        67%
+
+  These are PEARSON r on the embedding head only, which is how the runs
+  were originally scored. The final result uses BOTH heads and is measured
+  by balanced accuracy and AUC instead -- 86.7% / 0.919 on holdout. See
+  "THE CTC HEAD" below. Pearson r is kept here only for continuity with the
+  earlier runs; it is not the metric to report.
+
+  Better on every axis at FEWER parameters than either earlier attempt.
+  Capacity was never the constraint; the training objective was.
+
+THE GATE PASSED
+  Val r 0.732 vs holdout r 0.690 on two reciters the student never heard.
+  This is the question v5 rested on, and it is the thing that FAILED in v4a
+  (val AP 0.54, holdout AP 0.064). Distillation transferred the teacher's
+  speaker invariance.
+
+WHY THE REDESIGN WORKED -- the loss curves say it directly
+  ctc     31.4 -> 0.97     frame-level alignment supervision
+  metric   3.44 -> 0.08    started at ~ln(64)=4.16, i.e. chance for a
+                           64-way discrimination, so it did real work
+  distill  0.694 -> 0.105
+
+  Rewrite 1 had ONE scalar doing all three jobs: teaching what a correct
+  word sounds like, teaching alignment implicitly, and teaching the
+  accept/reject decision. Splitting them was the whole difference.
+
+  Adopted from Jin et al., Interspeech 2024 ("CTC-aligned Audio-Text
+  Embedding for Streaming Open-vocabulary Keyword Spotting"), whose
+  155K-parameter acoustic encoder reaches competitive accuracy -- which is
+  what settled the capacity question before we ran another width sweep:
+    1. CTC loss over characters (alignment supervision)
+    2. cosine similarity instead of a learned MLP head
+    3. in-batch negatives (~B-1 per positive, vs ~0.35 from mismatch
+       sampling)
+    4. word-level pooling, not per-character -- their ablation found
+       character-level the WEAKEST of three levels tried
+
+  Kept, against the literature: DISTILLATION, as a third loss term. Six
+  reciters cannot teach speaker invariance; CTC and metric learning would
+  have trained it from OUR six speakers. See the ablation below.
+
+THE ANOMALY THAT TURNED OUT TO BE A BUG
+  `clean>0.5` sat pinned at 74-80% across EVERY configuration -- different
+  data, widths, learning rates, epoch counts. A metric that refuses to move
+  while everything around it changes is usually structural, not a tuning
+  issue. It was: MAX_CHARS was 12, which truncated six of eleven common
+  Qur'anic words, and the lost characters are word-final diacritics --
+  exactly the kasra/sukun/tanwin contrasts the system exists to detect.
+  After 12 -> 20, clean>0.5 reached 84-97%.
+
+SATURATION
+  Val r plateaus at ~0.73 from epoch 21; epochs 30-35 are flat at 0.729
+  while the losses keep falling. More epochs will not help. The remaining
+  gains are in the data issues below, not in training longer.
+
+
+===============================================================================
+KNOWN DATA ISSUES -- NOT YET FIXED
+===============================================================================
+
+  SPLIT SIZES: NON-STANDARD BUT NOT A DEFECT. 16,453 train / 16,300 val is
+  a 50/50 split. Originally flagged here as wrong and recommended for
+  regeneration at 20k/4k/4k -- THAT RECOMMENDATION IS WITHDRAWN. It
+  conflated size with overlap. The size costs some epoch time; it does not
+  bias anything, and a larger val gives a lower-variance AUC estimate,
+  which matters now that AUC drives checkpoint selection. See the
+  CONFIGURATION section.
+
+  TRAIN AND VAL OVERLAP. Both were drawn from the SAME pool (six reciters,
+  557 ayahs), differing only by random seed, sampling 4000 variants from
+  3318 ayah-reciter pairs WITH REPLACEMENT. Each pair appears in a split
+  with probability 1 - e^(-4000/3318) = 70%, so ~49% of pairs (about 1628)
+  are in BOTH. For half the val set the model has already seen the same
+  reciter saying the same ayah -- only the augmentation and corruption
+  differ.
+
+    Consequence: val r 0.732 is inflated, and since checkpoints are now
+    selected on val r, selection partly rewards memorisation. The holdout
+    gap (0.732 vs 0.690) is about the size that contamination predicts.
+
+    HOLDOUT IS STILL CLEAN -- different reciters entirely -- so 0.690
+    stands as the honest number.
+
+    Fix: partition the key list in teacher.py BEFORE drawing, splitting by
+    (reciter, ayah) pair. That matches deployment: closed vocabulary, novel
+    audio. v4's pairs.py did split by ayah deliberately; that discipline
+    was lost in v5.
+
+
+===============================================================================
+THE ABLATION -- RUN, AND THE PREDICTION WAS WRONG
+===============================================================================
+
+    python student.py train ... --w-distill 0 --out runs/student_nodistill
+
+RESULT
+                          val r    holdout r    gap (val - holdout)
+    with distillation     0.732      0.690           +0.042
+    without               0.542      0.592           -0.050
+
+    distillation is worth ~0.10 holdout correlation
+    *** but see THRESHOLD SWEEP below: that 0.10 is CALIBRATION, not
+    discrimination. On balanced accuracy the no-distill model is
+    slightly BETTER. ***
+
+WHAT WAS PREDICTED, WRITTEN BEFORE THE RUN
+  "holdout r should drop MORE than val r. Val shares reciters with train,
+  so a student trained without the teacher can still do well there by
+  learning those six voices. Holdout is the only place the invariance
+  matters."
+
+WHAT ACTUALLY HAPPENED
+  The opposite. Removing distillation cost val 0.190 and holdout only
+  0.098. The no-distill model scores HIGHER on holdout than on val -- an
+  inverted gap.
+
+  So distillation is NOT primarily supplying speaker invariance. Both
+  models transfer to unseen reciters comparably; the with-distillation
+  model is simply better everywhere, and disproportionately better on the
+  contaminated val split.
+
+WHAT IT IS ACTUALLY SUPPLYING: AN ABSOLUTE SCALE
+  Without the teacher term, `clean>0.5` pins at 99.3-99.9% for 34 straight
+  epochs while `corrupt<0.1` crawls to 11-15%. Every output drifts high.
+
+  The mechanism is structural, not incidental:
+    - the metric loss only constrains RELATIVE ordering within a batch
+    - CTC only ever sees POSITIVE examples (mismatched pairs are excluded,
+      since aligning characters that are not there is meaningless)
+    - so NOTHING in the remaining objective anchors what an absolute score
+      should mean
+
+  The distillation term is the only signal that says "this word should
+  score 0.97 and that one 0.003". That is calibration, and it turns out to
+  be what the teacher was mostly contributing.
+
+  Supporting observation, though NOT proof: the `distill` column rises
+  0.703 -> 1.696 while unoptimised, i.e. the other two objectives actively
+  move the model away from the teacher's scale. Consistent with the
+  calibration reading; also consistent with the two models simply being
+  different, so it should not be leaned on.
+
+STILL TO CHECK -- SPEARMAN vs PEARSON
+  *** ANSWERED. See "THRESHOLD SWEEP" below -- and the answer overturns
+  this section's conclusion. ***
+  A threshold sweep showed the no-distill model reaching 81.8% balanced
+  accuracy against 79.9% for the distilled one. Its worse Pearson r came
+  from compressed outputs, not worse discrimination. Distillation buys
+  CALIBRATION, at no capability gain and possibly a small cost.
+
+THE INVERTED GAP IS EVIDENCE FOR THE VAL CONTAMINATION
+  Val overlaps train on ~49% of ayah-reciter pairs. The with-distillation
+  model can exploit that (val 0.732 > holdout 0.690). The no-distill model,
+  whose objectives are purely relative, apparently cannot (val 0.542 <
+  holdout 0.592). That asymmetry is itself a symptom of the split problem
+  documented above, and another reason to fix it.
+
+WHY THE FAILED PREDICTION IS WORTH KEEPING
+  It was written down before the run, so it could be wrong. A prediction
+  quietly revised afterwards would have produced a tidier story and a less
+  trustworthy one. The finding -- that the teacher's contribution here is
+  calibration rather than invariance -- is more interesting than the one
+  expected, and it changes what the v5 framing should claim.
+
+  NOTE ON THE EARLIER READING OF THIS RUN: at epoch 13 this was called
+  "collapsed to saying yes to everything". That was wrong and was corrected
+  -- a constant output would have r near zero, and r was 0.53 and rising.
+  The outputs are shifted high while the ordering underneath is informative.
+  That is a threshold-position observation, not a collapse. Reading
+  clean>0.5 / corrupt<0.1 as performance measures is a trap that caught us
+  repeatedly.
+
+
+===============================================================================
+THRESHOLD SWEEP -- SUPERSEDED, SEE "THE CTC HEAD" BELOW
+===============================================================================
+*** The conclusion in this section ("no-distill is better") is WRONG. It
+*** used only the embedding head and an unfair comparison. Kept because the
+*** per-model threshold tables and the Pearson-vs-calibration lesson are
+*** still valid. The model-vs-model verdict is not.
+
+Both models, holdout, sweeping the decision threshold instead of reading a
+fixed one.
+
+  WITHOUT distillation          positives median 0.998, p05 0.952
+                                negatives median 0.767, p95 0.999
+      thr    keep pos   catch neg   balanced
+      0.50     99.7%      36.9%      68.3%
+      0.75     99.3%      49.1%      74.2%
+      0.90     98.2%      59.9%      79.1%
+      0.95     95.4%      66.2%      80.8%
+      0.98     89.5%      74.1%      81.8%   <-- best
+      0.99     82.2%      79.5%      80.9%
+
+  WITH distillation             positives median 0.763, p05 0.086
+                                negatives median 0.030, p95 0.832
+      thr    keep pos   catch neg   balanced
+      0.50     73.4%      86.4%      79.9%   <-- best
+      0.75     51.3%      92.7%      72.0%
+      0.90     29.2%      97.3%      63.3%
+
+THE RESULT  *** LATER SHOWN WRONG -- see "THE CTC HEAD" ***
+  Best balanced accuracy: 81.8% WITHOUT distillation, 79.9% WITH.
+  This used only the EMBEDDING head. With both heads the ordering reverses:
+  86.7% with distillation vs 85.1% without.
+
+  The no-distill model is SLIGHTLY BETTER at the actual discrimination once
+  the threshold is allowed to move. Its Pearson r was worse purely because
+  its outputs are compressed into a high, narrow band -- which Pearson
+  penalises and a threshold sweep does not care about.
+
+SO THE CLAIM SHRINKS AGAIN  *** and then partly un-shrinks, see below ***
+  not  "distillation transfers speaker invariance"      (ablation killed it)
+  not  "distillation is worth ~0.10 correlation"        (that was measuring
+                                                         calibration)
+  but  "distillation produces a CALIBRATED score at no cost -- arguably a
+        marginal cost -- to discrimination"
+  The "no cost to discrimination" part did not survive: with both heads
+  consulted, distillation is worth ~1.5pp balanced accuracy as well.
+
+  That is a deployment convenience, not a capability gain. Useful: it means
+  the device can use a natural threshold near 0.5 and the score means
+  something. But it is not a better model.
+
+THE METRIC LESSON, AGAIN, AND THIS TIME IT WAS PEARSON
+  Correlation was insisted on all evening as "the honest, threshold-free
+  metric" -- and it misled in exactly the way the threshold rates were
+  accused of. Pearson is threshold-free but NOT calibration-free: it
+  penalises a model whose ranking is fine but whose outputs are squashed.
+
+  AUC is the right comparison between two models on different scales:
+  rank-based, so threshold-free AND calibration-free. It should have been
+  used from the start for any model-vs-model claim.
+
+  Three metrics have now each been trusted too far in turn:
+    corrupt<0.1  inflated by growing overconfidence
+    device top-1 an UNTRAINED model scored 0.993 on it (v4)
+    Pearson r    penalises compression, not just error
+  The pattern is not "use metric X". It is: cross-check any headline number
+  against a metric that fails differently, before believing it.
+
+PRACTICAL CONSEQUENCE FOR THE DEVICE
+  At thr 0.95: keep 95.4% of correct recitations, catch 66.2% of errors.
+  At thr 0.98: keep 89.5%, catch 74.1%.
+  Given the design principle carried from v3 -- a false stall costs one
+  repetition, a false confirmation teaches something wrong -- 0.95 is
+  probably the right operating point, not the balanced-accuracy optimum.
+
+
+===============================================================================
+THE CTC HEAD -- BEST RESULT OF THE PROJECT, AND IT WAS SITTING UNUSED
+===============================================================================
+
+The CTC head was TRAINED but never CONSULTED at inference. The reference
+system (Jin et al.) combines both heads:  z = z_CTC + lambda * z_embed.
+Tested on holdout, both models, sweeping lambda.
+
+                          with distill        no distill
+    embedding alone     82.7% / AUC 0.895   82.0% / AUC 0.880
+    CTC alone           84.9% / AUC 0.905   83.2% / AUC 0.890
+    COMBINED            86.7% / AUC 0.919   85.1% / AUC 0.905
+    best lambda              2.0                 0.5
+
+FINDING 1 -- THE CTC HEAD IS THE STRONGER ONE
+  84.9% vs 82.7% in the distilled model; 83.2% vs 82.0% without. The head
+  that was never used at inference beats the one that was, in BOTH models.
+  This is the largest single result here and it cost nothing to obtain --
+  the head was already trained.
+
+FINDING 2 -- THE TWO HEADS ARE COMPLEMENTARY
+  Combined beats both alone, and improves monotonically with lambda up to
+  ~2.0 before turning over. The reference paper's inference formula
+  reproduces on this data.
+
+FINDING 3 -- lambda IS MODEL-SPECIFIC, NOT A CONSTANT
+  2.0 for the distilled model, 0.5 for the ablation. Must be tuned per
+  checkpoint on a dev split.
+
+*** THIS REVERSES THE THRESHOLD-SWEEP CONCLUSION ABOVE ***
+  That section concluded the no-distill model was BETTER (81.8% vs 79.9%).
+  Wrong, for two reasons: the sweep script used only the EMBEDDING head,
+  and the two models' sweeps were not run on comparable footing.
+
+  With both heads and a fair comparison, DISTILLATION WINS ON EVERY
+  MEASURE, including AUC -- which is rank-based, so this is NOT
+  calibration. It is a real discrimination gain of ~1.5 points balanced
+  accuracy and ~0.014 AUC.
+
+WHERE THE CLAIM FINALLY LANDS
+  not  "distillation transfers speaker invariance"   -- ablation killed it,
+                                                        and that still holds
+  not  "the no-distill model is better"              -- measurement artifact
+  but  "distillation gives a modest discrimination gain (~1.5pp balanced,
+        ~0.014 AUC) AND a calibrated score, at 811K parameters"
+
+HEADLINE NUMBER FOR v5
+  86.7% balanced accuracy, AUC 0.919, on HELD-OUT RECITERS, from an
+  811K-parameter model combining both heads at lambda 2.0.
+
+FOUR REVERSALS IN ONE EVENING, ALL FROM BETTER MEASUREMENT
+    1. "distillation transfers invariance"     -> ablation: no
+    2. "worth ~0.10 correlation"               -> sweep: that was calibration
+    3. "no-distill is actually better"         -> both heads: no, it is worse
+    4. "correlation is the honest metric"      -> AUC: Pearson penalises
+                                                  compression, not error
+  None of these came from changing the models. All four came from measuring
+  the same models more carefully. The models were fine; the measurements
+  were not.
+
+
+===============================================================================
+CONFIGURATION -- WHAT EACH RUN ACTUALLY USED
+===============================================================================
+
+Recorded because the defaults changed AFTER the results above were
+measured. Any number quoted earlier belongs to the BASELINE column.
+
+                          BASELINE (runs 1-2)      CURRENT (after changes)
+  batch                          64                        256
+  epochs                         35                        100
+  lr                           3e-4                       3e-4
+  width / blocks              192 / 6                    192 / 6
+  params                      810,544                    810,544
+  w_distill / w_metric / w_ctc  1 / 1 / 0.3               1 / 1 / 0.3
+  mismatch_p                    0.35                       0.35
+  MAX_CHARS                       20                         20
+  inference head            EMBEDDING ONLY           both (lambda 2.0)
+  checkpoint selection      Pearson r on val         AUC on val
+  train / val / holdout      16453 / 16300 / 4009      unchanged
+
+  So the 86.7% / AUC 0.919 headline was obtained from a checkpoint that was
+  SELECTED on Pearson r and evaluated post-hoc with both heads. A model
+  selected on AUC from the start has not yet been trained.
+
+WHY EACH DEFAULT CHANGED
+
+  batch 64 -> 256
+    The metric loss fell to 0.034 by epoch 35 -- with 63 in-batch negatives
+    the discrimination was solved and had stopped producing gradient.
+    Literature: small batches make InfoNCE approach zero "at the same
+    magnitude with the floating-point error... it may seriously affect the
+    training". The reference system uses 1024.
+    Caveat: one paper reports the OPPOSITE (fewer negatives helping), so
+    this is contested in general -- but the loss hitting 0.034 is direct
+    evidence that OURS had gone uninformative.
+
+  epochs 35 -> 100
+    OneCycleLR annealed lr to 4.9e-6 by epoch 33 and 3.0e-8 by epoch 35.
+    The "plateau" at epochs 30-35 was the SCHEDULE, not convergence. This
+    was called saturation earlier and that was wrong. The reference system
+    trains 100 epochs.
+
+  inference: embedding only -> both heads
+    The CTC head was trained and never consulted. It is the STRONGER head
+    (84.9% vs 82.7% balanced) and the combination beats both (86.7%).
+
+  selection: Pearson r -> AUC
+    r penalises compressed outputs even when the ordering is correct. The
+    ablation looked 0.10 worse by r and was only ~1.5pp worse by balanced
+    accuracy. AUC is rank-based, so it measures what survives thresholding.
+
+WHAT WAS *NOT* CHANGED, AND WHY
+
+  THE SPLIT SIZES. 16453 / 16300 / 4009 is a 50/50 train/val split, which
+  is non-standard but not wrong. Two reasons to keep it:
+    - the real defect is the OVERLAP (~49% of ayah-reciter pairs appear in
+      both train and val), not the size. Shrinking val would not fix that.
+    - a larger val set gives a LOWER-VARIANCE estimate, which matters more
+      now that checkpoint selection runs on AUC, a noisier statistic than
+      a loss.
+  An earlier note in this file conflated size with overlap and recommended
+  regenerating at 5000/1000/1000. That recommendation is withdrawn; the
+  overlap fix (partitioning keys before drawing) stands on its own.
+
+
+===============================================================================
+PROCESS NOTE -- WHERE THE TIME ACTUALLY WENT
+===============================================================================
+
+Six training runs to the first trustworthy result. Three were wasted, and
+every one of the three came from a SILENT failure, not a crash:
+
+  1. neg_weight left at 4.0 after mismatch negatives changed the class
+     balance from 12% to 49% positives -- negatives ended up carrying 81%
+     of the loss and the model collapsed to predicting ~0 everywhere.
+  2. --max-examples silently ignored when --cache-train was used, so the
+     "500-example overfit test" was never an overfit test. Two runs were
+     byte-identical and it took comparing them line by line to notice.
+  3. render() changed to return three values; one of its two call sites was
+     not updated. A bare `except: continue` inside an uncapped while-loop
+     turned a one-line signature mismatch into a 30-minute stall with zero
+     output.
+
+Also silent, and only found by reading the file end to end:
+  - a stateful RNG meant the val set was REDRAWN EVERY EPOCH, so the val
+    curve was measured on different data each pass -- and forked DataLoader
+    workers all shared the same draw sequence
+  - checkpoint selection on val loss saved epoch 17 while correlation kept
+    improving to 35
+  - word spans recomputed from pre-corruption timings, putting the window
+    on the wrong audio for every word after a corruption (~18% of examples
+    carrying ~1.0 targets)
+
+  THE LESSON: fail loudly, and assert assumptions in code rather than in
+  your head. `assert len(tr) == expected` would have caught (2) in seconds.
+  Every one of these produced plausible-looking output that cost a run to
+  diagnose.
+
+A METRIC LESSON WORTH KEEPING
+  An earlier checkpoint scored corrupt<0.1 = 62.6% with r = 0.271; a better
+  one scored 32% with r = 0.510. The rate was being inflated by growing
+  OVERCONFIDENCE, not better discrimination. Threshold-based rates move
+  when a model's output distribution shifts; correlation does not. This is
+  the same failure as the v4 device-localization metric on which an
+  UNTRAINED model scored 0.993.
+
+  Caveat recorded honestly: "val loss rising means the metric is being
+  gamed" is TOO STRONG as a general claim, and was pushed back on
+  correctly. Cross-entropy punishes confident errors disproportionately, so
+  a model can sharpen its outputs -- worsening loss -- while ranking
+  improves. The width-512 run is the clean counterexample: val loss rose
+  from 0.506 to 0.70 while holdout correlation reached its best value yet.
+  Divergence is a REASON TO CHECK, not proof.
+
+
+===============================================================================
+OPEN THREADS  (carried over, not yet resolved)
+===============================================================================
+
+  - corrupted fraction for the teacher-extraction pilot (project_plan.txt
+    section 4): run the pilot, look at the target distribution, set it from
+    that -- do not guess up front. teacher.py pilot / inspect exist for
+    this.
+
+  - whether confirmation in the streaming UI needs to beat real-time, or
+    whether a lagging highlight is tolerable for a fluent reciter
+    (project_plan.txt section 6).
+
+  - stage 2 fine-tuning data: matched learner pairs (v4's Recording_5 /
+    Recording_6) and QDAT, neither yet acquired in a training-ready form.

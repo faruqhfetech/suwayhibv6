@@ -1,0 +1,667 @@
+SUWAYHIB v6 -- PAPER DRAFT SKELETON
+An offline, streaming, no-diagnosis pronunciation companion for Qur'anic
+recitation.
+Draft skeleton, written for continuation into a full ArabicNLP-style
+submission. Every number below is either measured in this project or
+cited from a named external source; nothing is invented, and places
+where a result is designed-but-not-yet-executed are marked PENDING
+rather than presented as complete.
+
+
+===============================================================================
+ABSTRACT (draft)
+===============================================================================
+
+We present Suwayhib, an offline, streaming system that gives learners of
+Qur'anic recitation real-time feedback without ever naming the specific
+error. Words on screen turn green as they are confirmed spoken; if the
+green edge stops advancing, the learner repeats the last word. The
+system never displays a wrong-word indication of any kind. This design
+choice, made on pedagogical grounds (information without accusation, for
+a child being told they got the Qur'an wrong), turns out to sidestep an
+open problem the mispronunciation-detection field has itself named: the
+lack of a reliable mapping from phoneme-level model output back to
+actionable character-level feedback.
+
+Suwayhib's v6 iteration reframes streaming recitation feedback as
+constrained forced alignment with a rejection option, rather than
+open-vocabulary keyword spotting -- exploiting that the verse, its word
+order, and its phone sequence are all known in advance. We build a
+frozen self-supervised encoder (wav2vec2-XLS-R-300M), a small trained
+phone-recognition head (2.15M parameters), and a streaming decoder whose
+design went through five documented failure iterations -- three of them
+in this project alone, after five earlier ones in a prior version of the
+system -- before literature grounding (Hwang et al., 2015) resolved the
+central design question: a properly-trained CTC head needs no explicit
+competing "filler" hypothesis at all.
+
+We report conditioned word-verification F1 of 0.926 (in-distribution)
+and 0.923-0.933 (held-out reciters) on a 2,000-item synthetic benchmark
+with an artifact control, alongside a blind phoneme-recognition F1 of
+0.41-0.41 on the IQRA 2026 shared-task leaderboard -- a harder,
+differently-defined task that our system was not designed to optimise
+directly, included for external comparability. We give a full account of
+what did not work and why, since several of the negative results
+(a keyword-filler tie that cannot be broken by construction; an
+attrition failure mode that grows worse the longer a wrong hypothesis
+survives) are, to our knowledge, not documented elsewhere in the
+streaming-CTC literature in this form.
+
+
+===============================================================================
+1. INTRODUCTION
+===============================================================================
+
+1.1 The problem
+
+Learning to recite the Qur'an correctly needs a teacher's ear: someone to
+catch a mispronounced word, a skipped elongation, a merged sound. Between
+lessons, learners practise alone, and small mistakes become habits. This
+is sharpest in under-resourced settings -- Qur'an schools in Kaduna,
+Nigeria, among them -- where teacher time is scarce and students practise
+independently by default, not by choice.
+
+Existing computer-assisted pronunciation tools for Arabic need an
+internet connection and send the learner's recitation to a cloud server.
+That is a real barrier where connectivity is unreliable, and it is also
+a discomfort in its own right: families may reasonably prefer that a
+private religious practice never leave the room.
+
+1.2 What we build
+
+Suwayhib is a small, low-cost, standalone practice companion that runs
+entirely offline. The learner selects a starting verse, presses start
+once, and recites continuously -- no button between words. Words on
+screen confirm (turn green) as they are spoken. Confirmation is
+MONOTONIC and never retracted: a word that goes green and then un-greens
+is worse, we argue, than no feedback at all. If the green edge stops
+advancing, the learner has hit something -- they can keep reciting or tap
+any word to reset the cursor there. The session ends on a stop press or
+a few seconds of silence.
+
+Critically, THE SYSTEM NEVER MARKS A WORD WRONG. A mispronunciation is
+communicated only as an absence of forward progress, never as a flagged
+error, never in a colour that reads as a verdict. This is not withheld
+information for its own sake; it is a considered choice, carried from
+earlier iterations of this project, that a false stall costs a learner
+one repetition, while a system that tells a child they got the Qur'an
+wrong -- rightly or wrongly -- costs something we are not willing to
+risk. Section 4.5 argues that this choice, made independently of the
+literature, turns out to align with what the field's own most recent
+shared task names as an unresolved, high-priority problem.
+
+1.3 What "v6" means
+
+This project has gone through five prior architectural iterations
+(summarised in Section 2), each abandoned for a documented, specific
+reason. v6 is a deliberate reframing of the task itself: not "does this
+audio contain this word" (open-vocabulary keyword spotting, which has no
+principled notion of absence), but "align this audio against a KNOWN
+expected phone sequence and decide, frame by frame, whether the
+alignment has completed" -- streaming forced alignment with rejection.
+That reframing, and the negative results that led to it and away from it
+again mid-implementation, are the paper's main technical content.
+
+
+===============================================================================
+2. RELATED WORK AND PROJECT HISTORY
+===============================================================================
+
+2.1 Prior iterations of this system (v1-v5)
+
+  v1  MFCC/DTW features + classifier shopping. 0.82 AUC, F1~60 across
+      three model families with different inductive biases, all
+      plateauing at the same point -- the signature of a REPRESENTATION
+      limit, not a model limit.
+
+  v3  Duration-deviation scoring, no training. DTW-aligns the learner
+      against reference reciters, scores word duration deviation from
+      reference-reciter consensus. AUPRC 0.901 (holdout 0.915), artifact
+      -control gap -0.007. Strong on gross timing errors (truncation
+      0.944), blind to segmental content: cannot see a wrong phoneme of
+      the right length.
+
+  v4a Contrastive acoustic word embeddings. val AP 0.54 (unseen words,
+      SEEN voices) but holdout AP 0.064 (unseen VOICES) -- the model
+      learned WORDS, not speaker invariance, because speaker-invariance
+      training in the literature uses hundreds to thousands of speakers
+      and this corpus has six. With six voices, voice IS a reliable cue,
+      and no architecture change fixes a data-scale limit. This single
+      finding is the reason v6's phone head is built on a FROZEN,
+      externally-pretrained self-supervised encoder rather than a
+      trained-from-scratch one (Section 4.1).
+
+  v4b Forced decoding with a fine-tuned Whisper (Tarteel-ai
+      whisper-base-ar-quran, 72.6M params). Teacher-forces the decoder
+      with the KNOWN verse text and reads the token-level probability
+      assigned to each token. Reference reciters score worst-token
+      median 1.0000 (p05 0.9993); a deliberate substitution scores
+      0.000. SHIPPED, and it is the origin of the "worst token, not
+      mean" lesson (a single bad token barely moves a MEAN score but IS
+      the error) that recurs, ignored and then re-learned, twice more in
+      v5 and once more in v6 (Section 5.2). Limitation: record-then-
+      submit, not streaming.
+
+  v5  Distillation toward a small (811K parameter) streaming student,
+      trained via distillation + in-batch metric learning + CTC. Offline
+      result solid (holdout AUC 0.919). FIVE STREAMING DECODERS WERE
+      WRITTEN AND ALL FAILED. Root cause, diagnosed in the v5-to-v6
+      handover: the student was trained as a VERIFIER (every training
+      window a correct, pre-cropped span of exactly one word) and used
+      as a DETECTOR (must decide, from a growing, unbounded window,
+      whether the word is present at all). It was never shown a negative
+      window, a partial window, or anything it should reject. No decoder
+      rewrite can extract a capability the training never put there.
+
+2.2 The IQRA / Iqra'Eval shared tasks
+
+Iqra'Eval (ArabicNLP 2025) [El Kheir et al., 2025,
+aclanthology.org/2025.arabicnlp-sharedtasks.61] introduced the first open
+benchmark for Mispronunciation Detection and Diagnosis (MDD) in Qur'anic
+recitation: given an utterance and its reference vowelised transcript,
+predict the pronounced phoneme sequence, scored against both the
+canonical sequence and a human-annotated verbatim sequence. IQRA 2026
+[arXiv:2603.29087] expanded the corpus (Section 2.3) and reports a
+leaderboard: whu-iasp (1st, F1 0.7201: frozen wav2vec2-xls-r-300m,
+learnable multi-layer weighted fusion, a Temporal Convolutional Network,
+CTC, two-stage curriculum, multi-checkpoint fusion and n-gram rescoring
+at inference), UTokyo (2nd, F1 0.7170: Optimal Temporal Transport
+Classification in place of plain CTC, addressing CTC's frame-alignment
+limitations directly), and RAM (3rd, F1 0.7157: no architectural novelty
+at all -- pure data curation via agreement-filtering across three
+independently trained models, within 0.005 F1 of first place). The
+closeness of these three, achieved by fundamentally different means, is
+the strongest available evidence that for this task DATA QUALITY
+DOMINATES ARCHITECTURE. The published baseline is F1 0.4414 (precision
+0.3039, recall 0.7707).
+
+A pattern the organisers report, and that recurs independently in this
+project's own decoder history (Section 5.2): systems performing BELOW
+baseline show high recall at very low precision, read as a system that
+has not learned to discriminate and defaults to near-universal
+rejection. Our own decoder failures showed the mirror image -- near-
+universal ACCEPTANCE -- which is the same underlying deficit (a model or
+decoder that cannot discriminate falls back on a constant answer) with
+the sign flipped by which way the specific failure happened to lean.
+
+The organisers name, as a stated future priority, evaluation frameworks
+bridging phoneme-level model output to actionable character-level
+feedback for learners, citing the lack of a reliable mapping from a
+predicted erroneous phoneme back to the corresponding Arabic character
+as one of the most pressing and underexplored open problems in Arabic
+CAPT. Suwayhib's no-diagnosis interface (Section 1.2, Section 4.5) was
+not designed with this problem in mind; it turns out to route around it
+entirely, since the system never attempts the mapping at all.
+
+2.3 Corpora
+
+IqraEval/Iqra_train (~79h train, ~3.4h dev; native MSA speech, pseudo-
+labelled -- speakers assumed correct, so phoneme_ref and phoneme_mis are
+identical by construction). IqraEval/Iqra_TTS (~80h; synthetic speech
+with DELIBERATELY introduced text-level errors before synthesis, so
+phoneme_ref, the canonical sequence, and phoneme_mis, the sequence
+corresponding to the synthesised error, genuinely differ).
+IqraEval/Iqra_Extra_IS26 (~2h; REAL recordings of human mispronunciation,
+collected specifically for IQRA 2026 -- gated access, requested during
+this project, approval PENDING at time of writing). IqraEval/QuranMB.v2
+(the evaluation set; audio and item ID only -- ground truth is
+DELIBERATELY WITHHELD, confirmed by tracing the official scoring
+repository, which ships alignment/scoring code but no truth file, plus
+the existence of a Hugging-Face-Space leaderboard that scores submitted
+predictions server-side).
+
+2.4 CTC keyword spotting and the filler question
+
+Hwang et al. [arXiv:1512.08903], "Online Keyword Spotting with a
+Character-Level Recurrent Neural Network" -- CTC, character-level,
+streaming, i.e. our exact setting -- report that a decoding network WITH
+an explicit filler path and one WITHOUT (thresholding the keyword path's
+own posterior directly) give "virtually no performance difference": the
+filler network is not needed for a CTC keyword spotter, because CTC's
+own blank symbol already absorbs the non-keyword modelling role filler
+plays in classical keyword/filler HMM systems. Where filler-style
+decoding IS used successfully alongside CTC, it is implemented as a
+SEPARATE decoder on a separate graph, not as one additional state folded
+into the keyword lattice [Rosenberg et al., arXiv:1710.09617]. This
+literature was consulted only after three independent, increasingly
+careful attempts at an in-lattice filler state had each failed for a
+different, specific reason (Section 5.2) -- a sequence worth reporting
+in full, since the failure modes are instructive independent of the
+eventual (simpler) resolution.
+
+
+===============================================================================
+3. TASK DEFINITION
+===============================================================================
+
+Given: a known target verse, hence a known, ordered sequence of expected
+words, hence (via a grapheme-to-phoneme module) a known phone sequence
+per word. Given: a stream of audio frames arriving in real time. Decide,
+strictly sequentially and monotonically: has the current expected word
+now been spoken? If yes, advance the cursor and never revisit the
+decision. If evidence stops supporting the current word, stall, without
+indicating why.
+
+This is DELIBERATELY NOT the IQRA/Iqra'Eval task (open-vocabulary or at
+least verse-agnostic phoneme recognition, scored against a possibly-
+erroneous verbatim reference, offline). It is closer to constrained
+forced alignment with a rejection option. The distinction matters
+because it changes what "good" performance looks like: the operating
+point should be chosen to minimise FALSE CONFIRMS specifically, not
+balanced accuracy or F1, for a reason argued in Section 4.4.
+
+
+===============================================================================
+4. METHOD
+===============================================================================
+
+4.1 Why a frozen encoder
+
+v4a's finding (Section 2.1) is architectural: six voices cannot teach
+speaker invariance from scratch, because with six voices, voice IS a
+reliable predictive cue and any sufficiently expressive model will use
+it. wav2vec2-XLS-R-300M [Babu et al.] is pretrained on approximately 436k
+hours across 128 languages and already has the invariance our corpus
+cannot teach. It is used FROZEN throughout -- no fine-tuning -- both for
+this reason and because our compute budget (a single 4GB consumer GPU
+for iteration, Kaggle sessions for larger runs) cannot support fine-
+tuning a 300M-parameter model in any case.
+
+4.2 Layer selection
+
+A linear phone-classification probe was run over encoder layers 10-22
+(XLS-R-300M has 24 transformer layers; the phonetic-information peak in
+such models is reported in the 15-19 range, degrading toward both
+extremes). Measured: majority-class baseline 0.2095; peak at layer 18
+(0.3821); a smooth, single-peaked profile with spread 0.0308 across the
+probed range (above a pre-registered flat-curve threshold of 0.02,
+confirming the choice of encoder layer is not arbitrary). Layers 14-19
+were selected as the band fed to the trained head, via a LEARNED
+weighted sum (SUPERB-style) rather than a single fixed layer -- consistent
+with, and independently corroborated by, the IQRA 2026 baseline's own
+architecture choice.
+
+4.3 The phone head
+
+Cached XLS-R features (6 layers, 1024-dim, 50Hz) feed: a learned
+softmax-weighted layer fusion; a linear input projection; 8 Conformer-
+style blocks (depthwise-separable convolution restricted to chunk
+boundaries -- "dynamic chunk convolution", so a single model serves any
+streaming latency budget chosen at inference, following the U2/U2++
+line of work -- plus chunked self-attention); a linear CTC output over
+a 68-symbol phone inventory plus blank; and a SECOND, auxiliary output
+head predicting per-frame word-END probability, supervised only where
+verified word boundaries exist (our own reference-library manifest;
+absent for streamed external corpora). 2.15M parameters at the
+configuration used for the reported results (dim 128, 8 blocks,
+feed-forward multiplier 2).
+
+THERE IS NO TEXT ENCODER. The expected word's phone sequence enters the
+DECODER as symbols, resolved directly against the head's output
+distribution -- not as a learned embedding compared by similarity. This
+deletion (relative to v5's design, which spent a large parameter share
+on exactly such a text encoder) is a direct consequence of the v4a
+finding: a learned audio-text similarity space is precisely the
+mechanism that collapsed to speaker identity with six voices.
+
+4.4 The streaming decoder
+
+For the currently expected word's phone sequence p_1..p_N, a standard
+CTC forced-alignment lattice is built: states
+[blank, p_1, blank, p_2, ..., p_N, blank], with self-loops, forward
+transitions, and a "skip the intervening blank" transition between two
+DIFFERENT consecutive phones (refused between identical phones, to avoid
+collapsing a genuine geminate). Scoring is Viterbi (max), in log space.
+
+CONFIRMATION RULE. The word is confirmed once the length-normalised
+log-posterior of the best completed alignment -- normalised by frames
+the path has spent OCCUPYING A PHONE, not by wall-clock frames elapsed
+-- exceeds a fixed threshold tau for several consecutive frames (a
+"commit lag", absorbing single-frame spikes). No competing "filler"
+hypothesis is modelled at all (Section 2.4, Section 5.2).
+
+DURATION CAP. Each lattice state's self-loop is penalised once it has
+been the winning transition for longer than a cap derived from measured
+reference-reciter word durations; the penalty applies to the inherited
+duration count for EVERY transition type into a state, not only literal
+self-loops (Section 5.2 explains why the narrower version was
+insufficient).
+
+tau is chosen at a FIXED, LOW FALSE-CONFIRM RATE, not by balanced
+accuracy. The argument: under monotonic, never-retracted confirmation, a
+false stall costs the learner one repetition, but a false confirmation
+silently advances the cursor past audio that was never verified, and
+because confirmation cannot be retracted, everything downstream in that
+recitation session is now misaligned. The two error types are not
+interchangeable, and an operating-point criterion that treats them as
+such (as balanced accuracy or F1 implicitly do) is measuring the wrong
+thing for this product.
+
+4.5 The no-diagnosis interface as a design choice, and its relation to
+    an open problem in the field
+
+The interface decision (Section 1.2) predates any contact with the IQRA
+literature and was made on pedagogical grounds specific to this project's
+population: young learners reciting scripture, where a computer telling
+a child they are WRONG about the Qur'an carries a cost this project's
+earlier iterations already treated as unacceptable, independent of
+whether the flag is statistically justified. That the same design
+choice also sidesteps a problem the field's most recent shared task
+names explicitly as unresolved (Section 2.2) is presented here as a
+notable alignment, not as evidence the design was informed by that
+literature -- it was not, and the paper should be precise about that
+distinction.
+
+
+===============================================================================
+5. EXPERIMENTAL SETUP AND RESULTS
+===============================================================================
+
+5.1 Data pipeline validation (Gate 0 / Gate 1)
+
+The reference-library manifest (18,144 verified word segments across 8
+professional reciters, Juz Amma) was found to contain a real data-
+integrity gap: a documented exclusion list (excluded_ayahs.json, 10
+entries) had never actually been applied to the manifest it was meant to
+filter, and separately undercounted a genuine timing defect found by
+live cross-checking (Hani Rifai, 112:1, word overlap) that the project's
+own verification report had already flagged but never propagated into
+the exclusion file. Corrected manifest: 18,000 rows, 11 ayahs excluded,
+all cross-checks (row-count-divides-evenly-by-reciter-count; word-count
+agreement across reciters; span monotonicity) passing after correction.
+
+A grapheme-to-phoneme module was built independently (not vendored from
+the CC-BY-NC-licensed reference phonetiser the challenge inventory
+derives from) and measured against the IQRA phoneme labels present in
+Iqra_train: initial disagreement 21.5% across 2,000 sentences, reduced
+to 1.5% after identifying and correcting: gemination represented as
+symbol-doubling rather than a length feature (matching the challenge
+convention); a systematic emphatic-vowel-allophone split the challenge
+inventory retains despite its own paper reporting the distinction
+collapsed for MSA; two orthographic-carrier edge cases (fathatan's
+carrier alif; a shadda/vowel combining-mark ordering ambiguity); and one
+missing base symbol (the consonant /l/, omitted from a hand-maintained
+inventory set and later replaced by a corpus-measured inventory,
+independently arriving at exactly the challenge's stated 68-phoneme
+count once corrected).
+
+5.2 The decoder's own negative results
+
+Three filler-state designs were built and discarded for the trained
+phone head's real output, in this order, before the literature (Section
+2.4) was consulted:
+
+  (i)   filler score = max(logp) per frame. By construction this is the
+        best score ANY path can achieve that frame, so a PERFECT
+        constrained match can only ever TIE it, never beat it. Verified
+        directly: exit and filler scores converged to identical values
+        to four decimal places on a clean synthetic test.
+
+  (ii)  filler score = max(logp) minus a fixed per-frame penalty. Fixes
+        (i), but the penalty is charged on silent frames too, where the
+        constrained path correctly pays ~0. Given enough trailing
+        silence after ANY word -- correct or not -- filler's fixed tax
+        eventually exceeds any fixed constrained-path deficit,
+        regardless of whether the word was ever validated. Reproduced
+        directly: a deliberately wrong middle phone followed by 300 (and
+        separately 1000) frames of silence confirmed anyway, with the
+        constrained score sitting perfectly FLAT throughout -- zero new
+        evidence, filler simply exhausted.
+
+  (iii) filler score = logp[blank] (a silence/background model). Fixes
+        (ii), but real CTC output is famously SPIKY -- blank-dominant on
+        most frames even WITHIN a correctly recognised phone -- which
+        the first two designs' clean-block synthetic tests never
+        exercised. Under this design filler became nearly free almost
+        everywhere, and essentially nothing confirmed, including
+        plainly correct recordings.
+
+Literature grounding (Hwang et al.) then established that no filler
+state is required at all for a CTC-based streaming keyword spotter; the
+decoder was rewritten to threshold the constrained path's own length-
+normalised posterior directly (Section 4.4). Two further, independent
+bugs were found and fixed during this rewrite, both by constructing
+adversarial synthetic inputs before trusting any result on real audio:
+an illegitimate lattice transition that let a word's completion appear
+supported after a single frame, by inheriting a PRE-EVIDENCE baseline
+score through the standard CTC dual-start convention; and a duration-cap
+implementation that penalised only literal self-loops, missing an
+exploit where a "skip" transition could re-derive fresh, uncapped
+support from an unrelated, continuously-improving neighbouring phone
+every single frame. The final decoder passes ten constructed regression
+scenarios, including realistic spiky-CTC-shaped synthetic input and
+silence-survival stress tests up to 100 seconds, and is the first
+decoder in this project's history to correctly reject a genuine word
+substitution in a real recording while confirming genuinely correct
+recitation with zero false positives across the same small evaluation
+set (Section 5.4).
+
+5.3 Phone head: conditioned verification (v1 vs v2)
+
+Two training configurations are reported. v1: standard 90/10 random
+split over pooled training items (a methodological error, discovered
+after training: Husary and Minshawy -- the project's designated held-out
+reciters -- were present in the training set). v2: reciter-keyed split
+(Husary/Minshawy strictly held out), boundary-loss weight raised
+(0.3->1.0, targeting duration-sensitive error categories identified from
+v1's per-category breakdown), SpecAugment added with a masking policy
+that excludes time-masked frames from the boundary loss specifically (to
+avoid teaching the boundary head from evidence just deleted), and early
+stopping.
+
+Evaluated on a 2,000-item synthetic benchmark (word-level flag detection
+against seven injected corruption types plus a splice-seam artifact
+control, held out by reciter into dev/holdout subsets):
+
+              v1 (contaminated split)     v2 (reciter-held-out split)
+  dev F1      0.9261                      0.9239
+  holdout F1  0.9339                      0.9231
+  artifact-control false-flag rate:
+              17.0%                       30.0%   [REGRESSION]
+
+Per-category pass rate (holdout+dev pooled, v1 -> v2):
+  clean                    100.0% -> 100.0%
+  control_seam             83.0%  -> 70.0%   [REGRESSION]
+  madd_lengthening         89.0%  -> 96.5%   [improvement]
+  madd_shortening          96.2%  -> 94.6%
+  near_miss_substitution   99.0%  -> 98.5%
+  truncation               100.0% -> 100.0%
+  word_deletion            98.3%  -> 97.1%
+  word_repetition          27.5%  -> 29.4%   [unresolved]
+  word_substitution        97.5%  -> 98.0%
+
+Two findings are read as substantive rather than noise. First, raising
+the boundary-loss weight measurably helped exactly the duration-
+sensitive category it targeted (madd_lengthening) while measurably
+hurting artifact rejection (control_seam) -- plausibly the same
+increased sensitivity to acoustic discontinuity cutting both ways,
+though this is a hypothesis, not yet isolated by ablation. Second,
+word_repetition did not move under either configuration, which is
+better explained by a DATA gap than a loss-weight gap: neither training
+source used (clean reference recitation; native, error-free read
+speech) contains an example of word repetition, so no amount of
+reweighting an existing loss term teaches a model a phenomenon it has
+never once observed. Section 6 treats this as the most concrete,
+actionable next step.
+
+5.4 Streaming decoder, on the six recorded evaluation items
+
+Six recordings, all from a native Hausa-speaking reciter (the target
+population for this project, not a convenience proxy -- see the
+correction to Section 6's limitations discussion), labelled from
+listening into four categories: correct (2), weak articulation -- right
+word, under-enunciated (1), deliberate substitution error (2), and one
+capture artifact (clipped onset from a late-starting recorder,
+distinguished from a genuine pronunciation error because the word was
+said correctly and only the RECORDING is defective).
+
+With the v2 checkpoint and the final (no-filler) decoder: both correct
+recordings confirm fully; the artifact recording confirms fully (the
+intended behaviour -- a defective capture should not stall a correctly
+spoken word); the deliberate-substitution recording stalls EXACTLY at
+the corrupted word, with the winning path's duration-cap counter far
+below its cap (169 of 500 frames), confirming the rejection is driven by
+genuine acoustic mismatch rather than a timing artifact. The two weak-
+articulation/near-miss recordings stall one word earlier than their
+labelled target, at a word independently confirmed (via the v4b Whisper
+scorer) to be genuinely under-articulated in that recording -- correct
+per the "stall on weak evidence" design intent, though it means these
+two items do not exercise detection of the SPECIFIC labelled error
+further downstream in the utterance.
+
+A tau-sweep across the 2,000-item benchmark's holdout split (Section
+5.3's reciters) found NO single threshold jointly maximising both
+correct-recording completion and error-recording rejection: the best
+joint operating point (tau = -1.40) gives 97.5% correct-completion
+against 89.2% error-rejection: an operating point, not a solved problem.
+Per-category behaviour at this operating point mirrors Section 5.3's
+finding closely: every segmental category (word_substitution,
+word_deletion, near_miss_substitution, truncation, control_seam) at or
+near ceiling; every duration/repetition category
+(word_repetition 72.0%, madd_lengthening 74.1%, madd_shortening 89.3%)
+markedly weaker. This is read as confirmation that the decoder is
+correctly exposing a PHONE HEAD limitation rather than masking or
+compensating for one -- no threshold choice closes a gap the underlying
+posteriors do not support.
+
+5.5 Blind phoneme recognition (external leaderboard)
+
+Suwayhib's phone head, run through an unconstrained greedy CTC decode
+(no expected-verse conditioning at all -- a different, harder task the
+system is not designed to optimise for; included for external
+comparability only) and submitted to the IQRA 2026 leaderboard: v1
+checkpoint F1 0.4087 (precision 0.2710, recall 0.8313); v2 checkpoint
+approximately 0.41 (self-reported, exact figure not independently
+re-derived at time of writing). Both sit below the published baseline
+(0.4414) and in the lower portion of a 22-entry leaderboard topped at
+0.7201. The precision/recall imbalance (recall well above precision at
+both checkpoints) matches the organiser-reported pattern for below-
+baseline systems (Section 2.2): evidence the model under-discriminates
+on this harder, unconditioned task specifically, consistent with
+Section 5.3's finding that the SAME checkpoint reaches 0.92-0.93 F1 on
+the conditioned verification task it was actually designed for.
+
+
+===============================================================================
+6. LIMITATIONS
+===============================================================================
+
+Evaluation, aside from the 2,000-item synthetic benchmark, rests on SIX
+recordings from ONE speaker. That speaker is a native Hausa speaker,
+which is the project's actual target population (not a generic proxy
+voice, and not merely "one adult male voice" as an earlier internal
+document characterised it) -- but n=1 remains n=1, and the path to more
+speakers (family members and students in the same community) is
+concrete, low-cost, and not yet executed.
+
+No teacher has evaluated whether the system's stalls are pedagogically
+correct -- i.e. whether stalling matches what a human teacher would
+actually flag. This is arguably a larger open question than any metric
+in Section 5.
+
+The artifact-control false-flag rate (17-30% depending on
+configuration) is well above a historical benchmark from an earlier
+non-learned scoring method in this project (0.7%), and the v2 direction
+of change on this metric was a regression. This is unresolved.
+
+word_repetition detection is weak (27-29%) under both reported
+configurations and is attributed to a training-data gap (no repetition
+examples in the training corpora used), not a modelling gap; Section 7
+proposes a specific, mechanistically-motivated fix.
+
+The deployed model still runs the full 315M-parameter frozen encoder.
+Distillation toward a browser/phone-deployable size (target
+approximately 600K parameters, INT8, under 2MB) has not been attempted.
+Every result in this paper is from a development-time checkpoint, not a
+deployment-ready one.
+
+A full retrain incorporating the corpus's verbatim-mispronunciation
+labels (phoneme_mis, distinct from the canonical phoneme_ref this
+project's earlier training used exclusively -- a distinction this paper
+argues is the most likely explanation for the word_repetition gap) and
+the two-stage curriculum the strongest external systems report (Section
+2.2) has been designed and unit-tested (streaming data pipeline,
+length-bucketed batching measured at roughly 32% compute savings versus
+unbucketed batching, tri-stage learning-rate schedule, checkpoint/resume
+for session-limited compute) but NOT YET EXECUTED to completion at time
+of writing.
+
+
+===============================================================================
+7. FUTURE WORK
+===============================================================================
+
+Train on phoneme_mis rather than phoneme_ref, unlocking the ~80h
+Iqra_TTS corpus (currently unusable under a canonical-label training
+objective, since it would teach the model to emit the CORRECT sequence
+for audio containing a deliberate error). Adopt the two-stage curriculum
+(breadth training on Iqra_train+Iqra_TTS, then adaptation on
+Iqra_Extra_IS26's real human errors) that separates the top three IQRA
+2026 leaderboard entries from lower-ranked ones by margin, not
+architecture.
+
+Isolate, via ablation, whether the control_seam regression (Section 5.3)
+is genuinely caused by the raised boundary-loss weight, as hypothesised,
+or is confounded with the same run's other simultaneous changes.
+
+Re-run the tau sweep (Section 5.4) against a retrained checkpoint,
+across a materially larger held-out speaker set.
+
+Attempt encoder distillation toward a deployment-viable size, using the
+already-frozen phone head as a fixed measuring instrument for the cost
+of shrinking (a methodology this project used successfully once already,
+to select the XLS-R layer band in Section 4.2).
+
+Collect Hausa-accented recordings at the scale of tens of speakers
+rather than one, and bring a Kaduna or comparable teacher's judgement to
+bear on whether the system's stalls are pedagogically correct -- both
+of which are, notably, work this paper's own field names as an open
+research priority (Section 2.2), and neither of which requires further
+modelling work to begin.
+
+
+===============================================================================
+8. CONCLUSION (draft)
+===============================================================================
+
+[to be written once Section 7's retrain and re-evaluation land]
+
+
+===============================================================================
+REFERENCES (partial, to be completed)
+===============================================================================
+
+El Kheir et al. (2025). "Iqra'Eval: A Shared Task on Qur'anic
+  Pronunciation Assessment." ArabicNLP 2025 Shared Tasks.
+  aclanthology.org/2025.arabicnlp-sharedtasks.61
+
+El Kheir et al. (2026). "IQRA 2026: Interspeech Challenge on Automatic
+  Pronunciation Assessment for MSA." arXiv:2603.29087
+
+Hwang, K. et al. (2015). "Online Keyword Spotting with a Character-Level
+  Recurrent Neural Network." arXiv:1512.08903
+
+Rosenberg, A. et al. (2017). [filler-as-separate-decoder finding, CTC
+  keyword spotting]. arXiv:1710.09617
+
+Babu, A. et al. "XLS-R: Self-supervised Cross-lingual Speech
+  Representation Learning at Scale." (wav2vec2-XLS-R-300M)
+
+Wu, Z. et al. "U2++: Unified Two-pass Bidirectional End-to-end Model for
+  Speech Recognition." arXiv:2106.05642 (dynamic chunk training /
+  dynamic chunk convolution)
+
+Datasets: huggingface.co/IqraEval (Iqra_train, Iqra_TTS,
+  Iqra_Extra_IS26, QuranMB.v2)
+
+
+===============================================================================
+NOTES FOR WHOEVER CONTINUES THIS DRAFT
+===============================================================================
+
+Everything marked PENDING above is the actual, current, honest status as
+of this document's writing -- not a placeholder for something already
+known but omitted. Do not fill in Section 8 or firm up the v2 leaderboard
+figure in Section 5.5 without re-checking the source first; this
+project's own history (Sections 5.1, 5.2, 5.3) is largely a record of
+what happened when a number was trusted before it was checked.

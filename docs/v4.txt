@@ -1,0 +1,318 @@
+SUWAYHIB v4 -- WHAT WAS BUILT AND WHY
+Revised at the end of the v4 build. Supersedes v4_planning_superseded.txt,
+which proposed contrastive acoustic word embeddings. That approach was
+implemented, measured, and abandoned. Section 3 records why -- the negative
+result is the more useful half of this document.
+
+
+===============================================================================
+0. THE SHORT VERSION
+===============================================================================
+
+The device forced-decodes the learner's recitation against the KNOWN verse
+text using a Whisper model fine-tuned on Qur'anic Arabic, and reads the
+probability the model assigns to each token. Correct recitation scores near
+1.0; a mispronounced word collapses toward 0.
+
+  no training            the model was already trained for this
+  no gallery             no reference embeddings, centroids or spreads
+  no per-word threshold  one global value, 0.10, with two orders of
+                         magnitude of margin either side
+  no alignment step      the decoder handles it
+
+This is Goodness of Pronunciation (Witt & Young, 2000) with a modern
+backbone. The method is well known. What is ours: the corpus verification,
+the artifact-controlled evaluation, the comparison across four approaches,
+the orthography findings in section 5, and the device itself.
+
+
+===============================================================================
+1. MEASURED RESULTS
+===============================================================================
+
+WORD SCORES  (whisper-base-quran, prepared simple-plain text, worst token
+per word)
+
+  Husary, 160 words / 40 ayahs   median 1.0000  p05 0.9993  min 0.9913
+                                 0.00% below the 0.10 threshold
+  learner, correct, careful      0.51 - 1.00   (10 verses, no false flags)
+  learner, deliberate s -> s     0.000
+  wrong verse entirely           0.000  (every word)
+
+Nothing observed between 0.13 and 0.51. The threshold did not need fitting.
+
+A WORKED EXAMPLE -- the system was right and we were wrong
+  78:9 نَوْمَكُمْ scored 0.000 across three separate takes. We suspected a
+  model defect: Husary scores 0.982 on the same word and text. Reciting it
+  more deliberately moved it to 0.13, then to 0.99. The model had been
+  correct every time; the articulation was weak. That is the behaviour a
+  teacher's ear provides, and it is what the device exists to supply between
+  lessons.
+
+DEPLOYMENT  (measured on laptop CPU; Pi 4 estimated at 4-5x)
+  model            whisper-base-quran, 72.6M params
+  memory           ~300 MB, against 4 GB available
+  per attempt      0.48s CPU  (RTF 0.08)  ->  ~2 - 2.5s on a Pi
+  startup          13.6s once; load at boot, the learner never sees it
+  network          none, ever
+
+  Forced decoding is a SINGLE forward pass -- the tokens are already known,
+  so there is no autoregressive generation and no beam search. That is why
+  scoring is cheaper than transcription, and why base fits on a Pi without
+  quantisation.
+
+  So base can be kept. tiny is 2x faster but mis-heard نَجْعَلِ as نَجْعَلْ
+  and would have shown a learner an error they did not make.
+
+
+===============================================================================
+2. THE LEARNER'S USE CASES
+===============================================================================
+
+Enumerated first, because if the ML does not fall out of these it is
+decoration.
+
+SESSION
+   1. Choose a verse
+   2. Hear it recited correctly, whole
+   3. Hear it slowly or phrase by phrase
+   4. Recite it back without looking at a screen
+   5. Learn whether that was acceptable
+   6. Learn WHERE it was not
+   7. Retry with the correction in mind
+   8. Be told when to stop and ask a teacher
+   9. Move on, or repeat
+  10. Return tomorrow and not start from zero
+
+NOT YET HANDLED
+  11. Recite from memory with no reference played first
+  12. Recite several verses in a row
+        -> now nearly free: forced decoding handles multi-verse text as
+           easily as single. This is how learners actually practise.
+  13. Stop mid-verse, think, continue -- hesitation is not an error
+  14. A different but legitimate tajweed convention than the reference
+  15. A noisy room with other children reciting nearby
+  16. Shared use by siblings of different ages
+
+TEACHER
+  17. Which verses this student struggles with
+  18. Whether the struggle is improving
+  19. Trust that the device is not teaching something wrong
+
+
+===============================================================================
+3. THE APPROACHES, AND WHY THREE WERE NOT ENOUGH
+===============================================================================
+
+v1  CLASSIFIER SHOPPING ON MFCC / DTW FEATURES
+    82 AUC, F1 ~60. Swapping MLP, logistic regression and tree models over
+    the same features moved it a couple of points each time. Three model
+    families with very different inductive biases all capping out is the
+    signature of a REPRESENTATION limit, not a model limit.
+
+v3  DURATION DEVIATION   (shipped; still the fallback)
+    detection AUPRC 0.901 (baseline 0.700), holdout 0.915, artifact control
+    gap -0.007, top-1 localization 0.543.
+      truncation 0.944   word_deletion 0.758   repetition 0.344
+      madd 0.380-0.388   substitution 0.360    near-miss 0.250
+    Best single feature, mean_log_dev, reached 0.918 holdout AP alone
+    against 0.925 for logistic regression over seven features. Seven
+    thousandths was not worth a training dependency, so v3 ships the single
+    feature. Strong on STRUCTURE, blind on SEGMENTAL content -- duration
+    cannot see a wrong phoneme of the right length.
+
+v4a CONTRASTIVE ACOUSTIC WORD EMBEDDINGS   (implemented, abandoned)
+    val AP 0.54 (unseen words, seen voices) but holdout AP 0.064 (unseen
+    voices). It learned WORDS and not SPEAKER INVARIANCE.
+
+    THE REASON, and it is the useful finding: speaker-invariance work in the
+    literature trains on hundreds to thousands of speakers. This corpus has
+    SIX. With six voices there are not enough directions of speaker
+    variation to separate "voice" from "word", so the model encodes voice --
+    because with six voices, voice IS a reliable cue. No architecture or
+    loss change fixes that; it is a data limit.
+
+    Frozen pretrained features were tried next and did improve the raw
+    representation. Word AP on held-out voices, against ~0.0017 chance:
+      DistilHuBERT        0.011   (2 layers; curve still rising at the top)
+      whisper-base        0.108
+      whisper-base-quran  0.143   (same size as whisper-base: the delta is
+                                   Qur'anic fine-tuning)
+    But the trained head still produced z scores straddling per-word
+    thresholds ranging 5.6 to 23.4, with correct recitation and real errors
+    overlapping. The literature names this exact failure: a decision
+    threshold fitted this way "can be error specific and thus very hard to
+    generalize".
+
+    Also worth recording: an UNTRAINED head scored 0.993 on the
+    device-localization metric we had built, because that metric asked which
+    of ~3 words in an ayah this is -- easy, and not what the device needs.
+    Two evaluation designs in a row measured something adjacent to the real
+    task.
+
+v4b FORCED DECODING   (shipped)
+    Section 0. The model was already trained to do this; we were not asking
+    it the question it could answer.
+
+WHAT THE ABANDONED PIPELINE COST
+  pairs.py, features.py, head.py, embscore.py, embeddings.npz,
+  word_thresholds.json, feats_tiny/ (891 MB), cache/ (1.4 GB).
+  The code is kept for the write-up; the artefacts are deleted.
+
+
+===============================================================================
+4. WHY THE MODEL CHOICE IS DOING THE WORK
+===============================================================================
+
+whisper-base scored 0.108 word AP where whisper-base-quran scored 0.143 --
+same architecture, same parameter count; the difference is Qur'anic
+fine-tuning. In the final system that same fine-tuning is the difference
+between 0.99 and 0.000 separation.
+
+Tarteel's models are trained on crowdsourced recitations from thousands of
+ordinary users -- learners and children, not eight professional reciters.
+That is exactly the speaker diversity this corpus lacks, already in the
+weights. Without that model there is no result here, and the write-up should
+say so plainly.
+
+
+===============================================================================
+5. THE REFERENCE TEXT   (three rules, all derived empirically)
+===============================================================================
+
+Forced decoding scores audio against TEXT. If the orthography differs from
+what the model saw in training, probabilities drop for reasons that have
+nothing to do with pronunciation, and the device flags correct recitation.
+
+Scoring a professional reciter -- correct by construction -- against every
+Tanzil variant, mean worst-token over 40 ayahs:
+
+  quran-simple-plain   0.87        <- use this
+  quran-simple         0.65
+  quran-uthmani        0.25
+  quran-simple-min     0.00
+  quran-uthmani-min    0.00
+  quran-simple-clean   0.00
+
+RULE 1  use quran-simple-plain. The Tarteel models were fine-tuned on
+        imlaei script; Uthmani orthography penalises correct recitation
+        heavily.
+
+RULE 2  strip U+0670 ARABIC LETTER SUPERSCRIPT ALEF. This ONE codepoint
+        accounted for 9 of 11 mismatched ayahs -- every alif-maqsura ending
+        (مُوسَىٰ, إِلَىٰ, طَغَىٰ) and الرَّحْمَٰن. Removing it took the
+        reciter from 11/60 failures to 2/60.
+
+RULE 3  strip the basmala from ayah 1 of every surah except 1 and 9. Tanzil
+        prepends it; the audio does not contain it, so the model is asked to
+        find words that were never recited and the verse collapses.
+        Take the prefix FROM THE TEXT -- verse 1:1 IS the basmala. Two
+        hand-typed attempts failed because the superscript alef in
+        الرَّحْمَٰن does not survive a shell paste reliably.
+
+  After all three: mean worst-token 0.9994, 0 of 60 ayahs below 0.5.
+
+DIACRITICS ARE REQUIRED. simple-clean and every harakat-stripped variant
+scored exactly 0.000. The model genuinely hears vowelling, which is what
+makes the per-token diagnosis (kasra vs sukun) meaningful rather than
+inferred from context.
+
+
+===============================================================================
+6. IMPLEMENTATION DETAILS THAT DECIDED WHETHER IT WORKED
+===============================================================================
+
+None of these are in any paper. Each was the difference between working and
+not working.
+
+  THE FORCED TASK PREFIX. Whisper's decoder always begins with
+  <|startoftranscript|><|ar|><|transcribe|><|notimestamps|>. Omitting it
+  makes the FIRST real token collapse for everyone -- a professional reciter
+  scored logP -15 on a word he recites perfectly. Score the body tokens
+  only; the prefix positions are forced and carry no signal.
+
+  WORST TOKEN, NOT MEAN. One wrong diacritic in an eight-token word barely
+  moves the mean but IS the error. Measured: سُبَاتًا correct 0.994 worst,
+  deliberate ص 0.000 worst.
+
+  SILENCE TRIMMING. DTW must map every frame onto the reference, so a pause
+  before the learner starts is absorbed into the FIRST word's span. Observed
+  live: a 0.6s lead-in took a word from z=4 to z=16 under the embedding
+  scorer.
+
+  CLIPPED ONSETS. A learner who starts reciting before the recorder catches
+  up loses the first consonant, and the device flags a word they said
+  perfectly. Confirmed as the cause of one false flag.
+
+  A RANDOM MODEL MUST FAIL YOUR METRIC. An untrained head scored 0.993 on
+  our device-localization metric. Test this before trusting any number.
+
+  ROWS MUST DIVIDE EVENLY. Eight reciters saying identical text cannot
+  produce a fractional row count. That single check caught two separate
+  parse bugs in the corpus work -- an inclusive/exclusive index error and
+  missing word indices -- both of which passed every other structural test.
+
+
+===============================================================================
+7. WHAT THE DEVICE SAYS
+===============================================================================
+
+Unchanged from v3, and still justified by the error rates rather than by
+preference.
+
+  below threshold        silence. Ten verses in a row produced no
+                         interruption; that is what makes a replay mean
+                         something when it happens.
+  one word flagged       play the learner's own rendition of that word, then
+                         the reference, twice. No verdict is spoken. The
+                         replay IS the message.
+  every word flagged     "that sounds like a different verse" -- forced
+                         decoding detects this decisively, against all 6236
+                         verses rather than the +/-3 neighbour window v3
+                         used.
+  after three attempts   "practice this one with your teacher", and move on.
+
+The model now also names the specific weak TOKEN -- the kasra on نَجْعَلِ,
+the sin in سُبَاتًا. This is NOT surfaced to the learner by default: "you
+said sin as sad" is a strong claim to make to a child, and the replay is
+sufficient. It is the right content for a teacher's review log.
+
+
+===============================================================================
+8. WHAT IS NOT YET TRUE
+===============================================================================
+
+  ONE SPEAKER. Every uncontaminated result rests on one adult voice. One
+  speaker is an anecdote. The reference reciters are likely inside the
+  model's fine-tuning data (Tarteel trained on EveryAyah), so held-out
+  reciter numbers are optimistic and should be read as an upper bound.
+
+  NO REAL LEARNER ERRORS. The synthetic set passed its artifact control
+  three times (final gap -0.007), which proves the system is not detecting
+  splice seams. It cannot prove the error taxonomy matches what students
+  actually do. QDAT (1500+ voices, correct and incorrect recitation of three
+  tajweed rules) is public and would help.
+
+  NO TEACHER HAS SEEN IT. Nobody has asked a Kaduna teacher what students
+  get wrong most, or whether the flags are pedagogically right. One
+  twenty-minute conversation could redirect the error taxonomy and would be
+  worth more than several points of any metric.
+
+  PI NUMBERS ARE ESTIMATED, at 4-5x the measured laptop CPU time. Not
+  measured on the hardware.
+
+  everyayah AUDIO REDISTRIBUTION and the Tanzil TEXT LICENCE are both still
+  open in ATTRIBUTION.txt. The text is now actually needed, so rule 1 makes
+  the Tanzil question live. Resolve before any field deployment, not after.
+
+
+===============================================================================
+9. IF THERE IS A NEXT VERSION
+===============================================================================
+
+  - passage-level practice (use case 12), now nearly free
+  - progress tracking across sessions (use cases 17-18): store per-word
+    scores, show a teacher which words are not improving
+  - multi-speaker evaluation -- the gap that matters most
+  - Whisper cross-attention for word spans, replacing DTW entirely
+  - QDAT as a second, independent evaluation with real learner errors

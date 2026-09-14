@@ -1,0 +1,305 @@
+SUWAYHIB v5 -- PROJECT PLAN
+A closed-vocabulary streaming verifier, distilled from the v4 teacher.
+
+Written before building. Compare against v4_planning_superseded.txt, which
+was also written before building and turned out to be wrong about its
+central choice. Expect this document to be revised by what happens.
+
+
+===============================================================================
+1. THE RESEARCH QUESTION
+===============================================================================
+
+    Can a small closed-vocabulary verifier match forced-decoding accuracy
+    at a fraction of the compute?
+
+v4 is the baseline. The answer may be NO -- that is a finding, and a more
+useful one than most positive results, because it would establish a floor on
+how much model this task actually needs.
+
+Success is NOT "smaller and faster". A 15M student beating a 72.6M teacher on
+speed is arithmetic, not a result. Success is MATCHING IT ON ACCURACY --
+specifically on the segmental discrimination (s vs s, h vs h) that v3 could
+not do at all and v4 does at 0.994 vs 0.000.
+
+
+===============================================================================
+2. WHY THE TASK IS SMALLER THAN v4 TREATS IT
+===============================================================================
+
+v4 runs whisper-base-quran: 72.6M parameters, a general ASR model able to
+produce any of ~50,000 tokens in any order.
+
+The actual task:
+  - the verse is KNOWN before the learner recites
+  - Juz Amma contains ~2,200 distinct word types
+  - the question is never "what did they say" but "did they say THIS"
+
+That is verification, not recognition. The model never has to search a
+vocabulary; it has to check a hypothesis. Much of v4's capacity is paying
+for generality the task does not use.
+
+
+===============================================================================
+3. THE MODEL
+===============================================================================
+
+    input   an audio chunk  +  the expected word (text)
+    output  p(the expected word completes at this frame)
+
+    audio encoder    causal / limited-lookahead, ~8M, runs per chunk
+    text encoder     ~2M, characters WITH harakat, PRECOMPUTED offline
+    cross-attention  ~2M, the text queries the audio frames
+    completion head  per-frame probability
+
+    ~12-15M parameters total.
+
+DESIGN DECISIONS AND THEIR EVIDENCE
+
+  CROSS-ATTENTION, NOT TWO-TOWER.
+    Late fusion pools audio to a single vector and destroys the phoneme
+    detail that separates s from s. That is v4a, which scored holdout AP
+    0.064. Cross-attention is the mechanism that let v4 localise an error to
+    a single kasra. Use the thing with evidence behind it.
+
+  TEXT AS CHARACTERS WITH DIACRITICS, NOT PHONEMES.
+    Arabic is nearly phonemic once vowelled, and v4 proved the model uses
+    harakat: every diacritic-stripped text variant scored EXACTLY 0.000.
+    Characters avoid building a phoneme lexicon and tajweed rule set.
+
+  TEXT EMBEDDINGS PRECOMPUTED.
+    Closed vocabulary. Embed all ~2,200 word types once at build time and
+    ship them. At inference only the audio encoder and cross-attention run.
+    This is the speed advantage a general model structurally cannot have.
+
+  OUTPUT IS A PROBABILITY, NOT A BINARY.
+    One head gives three things: did it appear (any frame above threshold),
+    where (which frame), and how confidently (the peak). The third is what
+    allows "found, but weak" instead of forcing a verdict -- the same
+    property that made v4's single global threshold workable.
+
+  CAUSAL ENCODER.
+    No lookahead, so it runs on each incoming chunk. This is what makes
+    streaming possible and is the most likely source of accuracy loss
+    against offline v4.
+
+
+===============================================================================
+4. TRAINING
+===============================================================================
+
+STAGE 1 -- DISTILLATION
+
+    for each (reciter, ayah):
+        generate N augmented / corrupted waveform variants
+        run the v4 teacher, record per-word worst-token probability
+        train the student to reproduce that number
+
+  The teacher's speaker invariance came from thousands of Tarteel voices.
+  Distillation transfers it into a small student WITHOUT needing those
+  voices. That is the answer to the six-speaker limit that killed v4a: do
+  not learn invariance from six speakers, inherit it from a model that
+  learned it from thousands.
+
+  AUGMENTATION MUST HAPPEN AT THE WAVEFORM, BEFORE THE TEACHER.
+  The teacher has to SEE the augmented audio so its targets reflect it.
+  v4a cached features and thereby made waveform augmentation impossible --
+  do not repeat that.
+
+  CORRUPTION IS NOT OPTIONAL. Clean audio gives the teacher ~1.000 almost
+  everywhere (measured: Husary median 1.0000 over 160 words). A student
+  trained on that learns to output 1.0 always and never flags anything.
+  Deliberate errors are what create a RANGE of targets and therefore a
+  gradient.
+
+  HARD NEGATIVES ARE WHERE THIS LIVES OR DIES. Random wrong words are
+  rejected trivially and stop teaching within an epoch. The mix must lean on:
+      - other words from the SAME ayah
+      - duration-matched donors from the same reciter
+      - minimal pairs: s/s, h/h, q/k, d/d
+  pairs.py already implements this mining and carries over directly.
+
+  OPEN: the corrupted fraction. Too low and the student says yes to
+  everything; too high and it says no. Start with a pilot, look at the
+  target distribution, then set it. Do not guess it up front.
+
+STAGE 2 -- TASK FINE-TUNING
+
+  Train on the actual decision -- correct vs incorrect -- using real
+  labelled data:
+      - matched learner pairs (v4 has Recording_5 correct / Recording_6
+        deliberate s->s on the same verse)
+      - QDAT: 1500+ voices, correct and incorrect recitation of three
+        tajweed rules, public
+
+  THIS IS WHERE THE STUDENT CAN EXCEED THE TEACHER. On raw acoustic
+  modelling it cannot -- a distilled student is bounded by its teacher. But
+  the teacher was optimised for TRANSCRIPTION, not for discriminating
+  correct from incorrect. Fine-tuning on the real decision is a different
+  objective, and the student can be better at it.
+
+
+===============================================================================
+5. THE STREAMING PIPELINE
+===============================================================================
+
+The model answers one question. A programmed state machine turns that into a
+practice session.
+
+    maintain a cursor at the next expected word
+    endpoint / trim silence and noise on the incoming stream
+    ask the verifier for the word at the cursor
+      found, confident  -> CONFIRM it, advance the cursor
+      found, weak       -> hold; keep listening
+      not found, audio continuing -> hold; they may still be saying it
+      not found, timeout or silence -> PAUSE and ask them to take it again
+                                       from this word
+
+  STRICTLY SEQUENTIAL, NO LOOKAHEAD. Wait for word 3 before considering word
+  4. This costs the ability to detect a later error while an earlier one is
+  unresolved, but it removes cascade failure entirely: the system can never
+  drift out of alignment because it never advances past something
+  unresolved.
+
+  ON TIMEOUT, ASK -- DO NOT DECIDE. The system does not have to work out WHY
+  a word is missing (skipped, mispronounced, still coming, stopped). It only
+  has to notice it is stuck, and then ask the learner to repeat from that
+  word. That is what a teacher does, and it collapses four hard
+  classification problems into one easy one.
+
+  THIS LOWERS THE ACCURACY BAR. "I did not hear that, let us take it again"
+  costs one repetition when wrong. "You got that wrong" costs trust. Same
+  insight as v3's replay-is-the-message, applied to a streaming loop.
+
+  RESUME FROM A KNOWN WORD, not from wherever the learner is. Keeps the
+  sequential invariant intact, and re-reciting a phrase IS the practice.
+
+
+===============================================================================
+6. THE INTERFACE
+===============================================================================
+
+Different from v3/v4, and it is the more interesting half of this version.
+
+  Feedback becomes a STATE, not an EVENT. The verse is displayed; words
+  confirm as they are recited. The learner watches progress instead of
+  waiting for a verdict.
+
+  CONFIRMATION IS MONOTONIC AND NEVER RETRACTED. A word that lights up and
+  then un-lights is worse than no feedback at all. This implies a
+  CONSERVATIVE confirmation threshold: leaving a correct word unconfirmed
+  for another moment is cheap; confirming wrongly is not.
+
+  THE VISIBLE STATE IS "CONFIRMED SO FAR", NOT "ERRORS". The device never
+  says anything is wrong -- it just stops confirming. The learner notices
+  the words stopped lighting up. Information without accusation, which is
+  the same principle as the replay, expressed continuously.
+
+  RISK: a fluent learner outruns the display. If they recite three words in
+  the time the system confirms one, the highlight lags and feels broken.
+  Open question whether confirmation must beat real-time or whether lag is
+  tolerable.
+
+
+===============================================================================
+7. EVALUATION
+===============================================================================
+
+  REUSE testset/ EXACTLY. Do not regenerate. It is what makes v3, v4 and v5
+  comparable, and regenerating it destroys the whole comparison.
+
+  REPORT THE CONTROL-SEAM FALSE-POSITIVE GAP FIRST, as in v3 and v4. If the
+  student is reading splice artifacts, nothing else means anything.
+
+  REPORT PER TIER, never a single aggregate F1. An aggregate over a mixture
+  we chose is a statistic about our sampling.
+
+  THE COMPARISON TABLE:
+                            v3        v4        v5
+      detection AUPRC       0.901     -         ?
+      top-1 localization    0.543     -         ?
+      s vs s separation     ~none     0.994/0.000  ?
+      params                0         72.6M     ~15M
+      CPU per attempt       ~1s       0.48s     ?
+
+  ACCURACY-MATCHED OR IT IS NOT A RESULT.
+
+  CHECK THAT A RANDOM MODEL FAILS THE METRIC. In v4 an UNTRAINED head scored
+  0.993 on a device-localization metric we had built, because the metric was
+  asking an easy question. Run this check before trusting any number.
+
+  THE UNCONTAMINATED TEST is a real voice not in Tarteel's training data.
+  v4's seven learner recordings are the only such data in the project.
+
+
+===============================================================================
+8. RISKS, HONESTLY
+===============================================================================
+
+  DISTILLED STUDENTS ARE BOUNDED BY THEIR TEACHERS. Stage 1 cannot exceed
+  v4. Only stage 2, on a different objective, can. If QDAT and learner data
+  do not materialise, the ceiling is v4 and the RQ becomes "how close, how
+  cheap" rather than "can it beat it".
+
+  STREAMING WILL COST ACCURACY. Causal encoding sees less context than
+  offline forced decoding. Budget for the offline student to work first and
+  the streaming student to be worse.
+
+  SIX SPEAKERS IS STILL SIX SPEAKERS. Distillation is the proposed answer,
+  but it is a HYPOTHESIS. If the student inherits the teacher's outputs
+  without inheriting its invariance, this is v4a again with a different
+  head. TEST THIS EARLY: evaluate on held-out reciters after stage 1, before
+  building any of the streaming machinery.
+
+  THE PIPELINE MAY MATTER MORE THAN THE MODEL. Endpointing, timeouts, and
+  the confirm/hold/pause logic may dominate the experience regardless of how
+  good the verifier is. That is arguably GOOD for an AI systems design
+  course, but it means model metrics will not tell the whole story.
+
+
+===============================================================================
+9. ORDER OF WORK
+===============================================================================
+
+  1. Teacher extraction: augment + corrupt, run v4, dump targets.
+     PILOT FIRST -- a few hundred examples, then look at the target
+     distribution before scaling. The corrupted fraction should be set by
+     what the teacher actually produces, not guessed.
+
+  2. Student, OFFLINE first. Non-causal encoder, whole-window input. Prove
+     the verification task is learnable at 15M before adding streaming.
+
+  3. Held-out-reciter evaluation. THE GO / NO-GO GATE. If the student does
+     not transfer across voices here, distillation did not solve the
+     six-speaker problem and the approach is dead. Better to know at this
+     point than after building the pipeline.
+
+  4. Compare against v4 on testset/, same harness, same tiers.
+
+  5. Only then: causal encoder, streaming pipeline, new interface.
+
+  6. Stage 2 fine-tuning, if labelled data exists.
+
+  KILL CRITERIA. If step 3 shows the same collapse v4a showed -- strong on
+  seen voices, weak on unseen -- stop. Write it up as a second, stronger
+  negative result: distillation from a well-generalising teacher was NOT
+  sufficient to transfer speaker invariance into a small student under a
+  six-speaker data regime. That is a genuinely useful finding, and it is
+  better than three more weeks of tuning.
+
+
+===============================================================================
+10. WHAT CARRIES OVER FROM v4
+===============================================================================
+
+  textscore.py    THE TEACHER. Imported, not just referenced.
+  reftext.py      text preparation. The three rules (simple-plain, strip
+                  U+0670, strip basmala) are already validated at 0.9994.
+  injector.py     corruption tooling, for generating low targets
+  pairs.py        hard-negative mining
+  testset/        the comparability anchor -- DO NOT REGENERATE
+  manifest_full.csv, reference_library/, texts/
+
+  NOT carried over: device.py, static/, baseline.py, and the whole embedding
+  chain. A device comes after the student works, and it will need a
+  different interface anyway.

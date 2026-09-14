@@ -1,0 +1,1772 @@
+preparing items (encoding audio through the frozen head)...
+loaded runs/head_v2/best.pt  epoch 16  val 0.4276
+  layers [14, 15, 16, 17, 18, 19]  dim 128  blocks 8  params 2.15M
+encoder: facebook/wav2vec2-xls-r-300m (315M params, 24 layers, dim 1024) on cuda fp16
+[2J[HRecording.m4a  [correct]
+  correct
+
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[------------------------------]  0.1s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[------------------------------]  0.1s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[------------------------------]  0.2s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#-----------------------------]  0.2s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#-----------------------------]  0.3s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#-----------------------------]  0.4s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##----------------------------]  0.4s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##----------------------------]  0.5s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##----------------------------]  0.5s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###---------------------------]  0.6s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###---------------------------]  0.7s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###---------------------------]  0.7s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[####--------------------------]  0.8s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[####--------------------------]  0.8s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[####--------------------------]  0.9s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#####-------------------------]  1.0s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#####-------------------------]  1.0s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#####-------------------------]  1.1s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[######------------------------]  1.1s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[######------------------------]  1.2s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[######------------------------]  1.3s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#######-----------------------]  1.3s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#######-----------------------]  1.4s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#######-----------------------]  1.4s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[########----------------------]  1.5s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[########----------------------]  1.6s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[########----------------------]  1.6s /  5.4s
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#########---------------------]  1.7s /  5.4s
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#########---------------------]  1.7s /  5.4s
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#########---------------------]  1.8s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##########--------------------]  1.8s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##########--------------------]  1.9s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##########--------------------]  1.9s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###########-------------------]  2.0s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###########-------------------]  2.1s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###########-------------------]  2.1s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[############------------------]  2.2s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[############------------------]  2.2s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[############------------------]  2.3s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#############-----------------]  2.4s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#############-----------------]  2.4s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#############-----------------]  2.5s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##############----------------]  2.5s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##############----------------]  2.6s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##############----------------]  2.7s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###############---------------]  2.7s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###############---------------]  2.8s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###############---------------]  2.8s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[################--------------]  2.9s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[################--------------]  3.0s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[################--------------]  3.0s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#################-------------]  3.1s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#################-------------]  3.1s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#################-------------]  3.2s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##################------------]  3.3s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##################------------]  3.3s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##################------------]  3.4s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###################-----------]  3.4s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###################-----------]  3.5s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###################-----------]  3.6s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[####################----------]  3.6s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[####################----------]  3.7s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[####################----------]  3.7s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#####################---------]  3.8s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#####################---------]  3.9s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#####################---------]  3.9s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[######################--------]  4.0s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[######################--------]  4.0s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[######################--------]  4.1s /  5.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#######################-------]  4.2s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#######################-------]  4.2s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#######################-------]  4.3s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[########################------]  4.3s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[########################------]  4.4s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[########################------]  4.5s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#########################-----]  4.5s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#########################-----]  4.6s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#########################-----]  4.6s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##########################----]  4.7s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##########################----]  4.8s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##########################----]  4.8s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###########################---]  4.9s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###########################---]  4.9s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###########################---]  5.0s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[############################--]  5.1s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[############################--]  5.1s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[############################--]  5.2s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#############################-]  5.2s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#############################-]  5.3s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#############################-]  5.4s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##############################]  5.4s /  5.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+stopped -- did not reach the end
+
+  confirmed 2/4 words  (stalled)
+[2J[HRecording_1.m4a  [artifact]
+  artifact - clipped onset, leading wa-al- lost to late recorder start
+
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[------------------------------]  0.1s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[------------------------------]  0.1s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#-----------------------------]  0.2s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#-----------------------------]  0.2s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[##----------------------------]  0.3s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[##----------------------------]  0.4s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[##----------------------------]  0.4s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[###---------------------------]  0.5s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[###---------------------------]  0.5s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[####--------------------------]  0.6s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[####--------------------------]  0.7s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[####--------------------------]  0.7s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#####-------------------------]  0.8s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#####-------------------------]  0.8s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[######------------------------]  0.9s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[######------------------------]  1.0s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[######------------------------]  1.0s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#######-----------------------]  1.1s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#######-----------------------]  1.1s /  4.4s
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[########----------------------]  1.2s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[########----------------------]  1.3s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[########----------------------]  1.3s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#########---------------------]  1.4s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#########---------------------]  1.4s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[##########--------------------]  1.5s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[##########--------------------]  1.6s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[##########--------------------]  1.6s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[###########-------------------]  1.7s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[###########-------------------]  1.7s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[############------------------]  1.8s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[############------------------]  1.9s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[############------------------]  1.9s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#############-----------------]  2.0s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#############-----------------]  2.0s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[##############----------------]  2.1s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[##############----------------]  2.2s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[###############---------------]  2.2s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[###############---------------]  2.3s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[###############---------------]  2.3s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[################--------------]  2.4s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[################--------------]  2.5s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#################-------------]  2.5s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#################-------------]  2.6s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#################-------------]  2.6s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[##################------------]  2.7s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[##################------------]  2.8s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[###################-----------]  2.8s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[###################-----------]  2.9s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[###################-----------]  2.9s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[####################----------]  3.0s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[####################----------]  3.1s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#####################---------]  3.1s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#####################---------]  3.2s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#####################---------]  3.2s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[######################--------]  3.3s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[######################--------]  3.4s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#######################-------]  3.4s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#######################-------]  3.5s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#######################-------]  3.5s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[########################------]  3.6s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[########################------]  3.7s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#########################-----]  3.7s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#########################-----]  3.8s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#########################-----]  3.8s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[##########################----]  3.9s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[##########################----]  4.0s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[###########################---]  4.0s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[###########################---]  4.1s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[###########################---]  4.1s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[############################--]  4.2s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[############################--]  4.3s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#############################-]  4.3s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[#############################-]  4.4s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَالْجِبَالَ  أَوْتَادًا
+
+[##############################]  4.4s /  4.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+stopped -- did not reach the end
+
+  confirmed 0/2 words  (stalled)
+[2J[HRecording_2.m4a  [correct]
+  correct
+
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[------------------------------]  0.1s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[------------------------------]  0.1s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#-----------------------------]  0.2s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#-----------------------------]  0.2s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[##----------------------------]  0.3s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[##----------------------------]  0.4s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[##----------------------------]  0.4s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[###---------------------------]  0.5s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[###---------------------------]  0.5s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[####--------------------------]  0.6s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[####--------------------------]  0.7s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#####-------------------------]  0.7s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#####-------------------------]  0.8s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#####-------------------------]  0.8s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[######------------------------]  0.9s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[######------------------------]  1.0s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#######-----------------------]  1.0s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#######-----------------------]  1.1s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[########----------------------]  1.1s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[########----------------------]  1.2s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[########----------------------]  1.3s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#########---------------------]  1.3s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#########---------------------]  1.4s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[##########--------------------]  1.4s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[##########--------------------]  1.5s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[###########-------------------]  1.6s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[###########-------------------]  1.6s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[###########-------------------]  1.7s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[############------------------]  1.7s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[############------------------]  1.8s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#############-----------------]  1.9s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#############-----------------]  1.9s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[##############----------------]  2.0s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[##############----------------]  2.0s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[##############----------------]  2.1s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[###############---------------]  2.2s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[###############---------------]  2.2s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[################--------------]  2.3s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[################--------------]  2.3s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[################--------------]  2.4s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#################-------------]  2.5s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#################-------------]  2.5s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[##################------------]  2.6s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[##################------------]  2.6s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[###################-----------]  2.7s /  4.2s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[###################-----------]  2.8s /  4.2s
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[###################-----------]  2.8s /  4.2s
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[####################----------]  2.9s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[####################----------]  2.9s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#####################---------]  3.0s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#####################---------]  3.1s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[######################--------]  3.1s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[######################--------]  3.2s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[######################--------]  3.2s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#######################-------]  3.3s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#######################-------]  3.4s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[########################------]  3.4s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[########################------]  3.5s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#########################-----]  3.5s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#########################-----]  3.6s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[#########################-----]  3.7s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[##########################----]  3.7s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[##########################----]  3.8s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[###########################---]  3.8s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[###########################---]  3.9s /  4.2s
+[2J[Hوَخَلَقْنَاكُمْ  أَزْوَاجًا
+
+[##############################]  4.2s /  4.2s
+
+  confirmed 2/2 words  (complete)
+[2J[HRecording_3.m4a  [weak]
+  weak articulation of nawmakum (lawmakum can be detected)
+
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[------------------------------]  0.1s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[------------------------------]  0.1s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#-----------------------------]  0.2s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#-----------------------------]  0.2s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#-----------------------------]  0.3s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[##----------------------------]  0.4s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[##----------------------------]  0.4s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[##----------------------------]  0.5s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[###---------------------------]  0.5s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[###---------------------------]  0.6s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[####--------------------------]  0.7s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[####--------------------------]  0.7s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[####--------------------------]  0.8s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#####-------------------------]  0.8s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#####-------------------------]  0.9s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#####-------------------------]  1.0s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[######------------------------]  1.0s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[######------------------------]  1.1s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#######-----------------------]  1.1s /  4.9s
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#######-----------------------]  1.2s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#######-----------------------]  1.3s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[########----------------------]  1.3s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[########----------------------]  1.4s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[########----------------------]  1.4s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#########---------------------]  1.5s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#########---------------------]  1.6s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#########---------------------]  1.6s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[##########--------------------]  1.7s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[##########--------------------]  1.7s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[###########-------------------]  1.8s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[###########-------------------]  1.9s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[###########-------------------]  1.9s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[############------------------]  2.0s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[############------------------]  2.0s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[############------------------]  2.1s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#############-----------------]  2.2s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#############-----------------]  2.2s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[##############----------------]  2.3s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[##############----------------]  2.3s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[##############----------------]  2.4s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[###############---------------]  2.5s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[###############---------------]  2.5s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[###############---------------]  2.6s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[################--------------]  2.6s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[################--------------]  2.7s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[################--------------]  2.8s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#################-------------]  2.8s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#################-------------]  2.9s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[##################------------]  2.9s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[##################------------]  3.0s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[##################------------]  3.1s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[###################-----------]  3.1s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[###################-----------]  3.2s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[###################-----------]  3.2s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[####################----------]  3.3s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[####################----------]  3.4s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#####################---------]  3.4s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#####################---------]  3.5s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#####################---------]  3.5s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[######################--------]  3.6s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[######################--------]  3.7s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[######################--------]  3.7s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#######################-------]  3.8s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#######################-------]  3.8s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#######################-------]  3.9s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[########################------]  4.0s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[########################------]  4.0s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#########################-----]  4.1s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#########################-----]  4.1s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#########################-----]  4.2s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[##########################----]  4.3s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[##########################----]  4.3s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[##########################----]  4.4s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[###########################---]  4.4s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[###########################---]  4.5s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[############################--]  4.6s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[############################--]  4.6s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[############################--]  4.7s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#############################-]  4.7s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#############################-]  4.8s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[#############################-]  4.9s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hوَجَعَلْنَا  نَوْمَكُمْ  سُبَاتًا
+
+[##############################]  4.9s /  4.9s
+
+  the edge has stopped -- repeat the last word to continue
+
+stopped -- did not reach the end
+
+  confirmed 0/3 words  (stalled)
+[2J[HRecording_4.m4a  [error]
+  error - wrong word in the second position
+
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[------------------------------]  0.1s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[------------------------------]  0.1s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[------------------------------]  0.2s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#-----------------------------]  0.2s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#-----------------------------]  0.3s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#-----------------------------]  0.4s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#-----------------------------]  0.4s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##----------------------------]  0.5s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##----------------------------]  0.5s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[##----------------------------]  0.6s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###---------------------------]  0.7s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###---------------------------]  0.7s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###---------------------------]  0.8s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[###---------------------------]  0.8s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[####--------------------------]  0.9s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[####--------------------------]  1.0s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[####--------------------------]  1.0s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#####-------------------------]  1.1s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#####-------------------------]  1.1s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#####-------------------------]  1.2s /  6.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#####-------------------------]  1.3s /  6.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[######------------------------]  1.3s /  6.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[######------------------------]  1.4s /  6.4s
+
+  the edge has stopped -- repeat the last word to continue
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[######------------------------]  1.4s /  6.4s
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#######-----------------------]  1.5s /  6.4s
+
+green edge stopped -- acoustic evidence no longer supports the expected word
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#######-----------------------]  1.6s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#######-----------------------]  1.6s /  6.4s
+[2J[Hأَلَمْ  نَجْعَلِ  الْأَرْضَ  مِهَادًا
+
+[#######-----------------------]  1.7s /  6.4s
