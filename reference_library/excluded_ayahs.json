@@ -1,0 +1,52 @@
+[
+  {
+    "surah": 81,
+    "ayah": 21,
+    "reason": "word count disagreement (Minshawy=1 vs 3)"
+  },
+  {
+    "surah": 91,
+    "ayah": 14,
+    "reason": "word count disagreement (Shuraym=2 vs 7)"
+  },
+  {
+    "surah": 93,
+    "ayah": 7,
+    "reason": "word count disagreement (Tablaway=2 vs 3)"
+  },
+  {
+    "surah": 78,
+    "ayah": 40,
+    "reason": "Shuraym missing words 3-12; Shaatree w8 confirmed bad by ear"
+  },
+  {
+    "surah": 96,
+    "ayah": 7,
+    "reason": "word 0 fails for 3 reciters (missing x2, negative duration x1)"
+  },
+  {
+    "surah": 105,
+    "ayah": 4,
+    "reason": "Minshawy missing word 1"
+  },
+  {
+    "surah": 111,
+    "ayah": 5,
+    "reason": "Hani Rifai missing word 3"
+  },
+  {
+    "surah": 80,
+    "ayah": 23,
+    "reason": "Abdul Basit word 3 negative duration"
+  },
+  {
+    "surah": 111,
+    "ayah": 2,
+    "reason": "Abdul Basit word 0 negative duration (650->50ms)"
+  },
+  {
+    "surah": 91,
+    "ayah": 15,
+    "reason": "Shuraym segment 1.9s past end of audio"
+  }
+]

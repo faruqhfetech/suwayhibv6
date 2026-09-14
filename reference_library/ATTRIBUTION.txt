@@ -1,0 +1,28 @@
+SUWAYHIB -- THIRD PARTY DATA ATTRIBUTION
+
+WORD TIMING DATA
+  Source:  cpfair/quran-align, release-2016-11-24
+           https://github.com/cpfair/quran-align
+  License: Creative Commons Attribution 4.0 International (CC-BY 4.0)
+           https://creativecommons.org/licenses/by/4.0/
+  Note:    Attribution is REQUIRED in any distributed device, image,
+           repository or publication that includes this data. This
+           file must ship on any distributed SD card image.
+           The repository author asks to be emailed by users of the
+           data so they can be notified of revisions.
+
+AUDIO RECORDINGS
+  Source:  everyayah.com
+  License: SEE 000_license.html IN EACH RECITER DIRECTORY ON
+           everyayah.com. NOT YET VERIFIED FOR REDISTRIBUTION.
+
+  *** OPEN ITEM ***
+  Research and personal use is one thing; shipping this audio on a
+  distributed SD card is redistribution and requires checking the
+  per-reciter license terms FIRST. Resolve before any Kaduna field
+  deployment, not after.
+
+CANONICAL TEXT (Phase 7 only, not yet used)
+  Source:  quran-uthmani.txt, Tanzil.net -- http://tanzil.net/download
+  Note:    Tanzil has specific conditions about unmodified
+           distribution. Check before including.

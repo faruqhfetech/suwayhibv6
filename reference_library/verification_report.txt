@@ -1,0 +1,83 @@
+SUWAYHIB -- REFERENCE LIBRARY VERIFICATION
+=======================================================
+
+Alafasy_128kbps
+  ayahs checked : 564
+  passed        : 563 (99.8%)
+  excluded      : 1
+  status        : PASS
+  excluded ayahs:
+    78:36  word 1: suspiciously short (60ms)
+
+Husary_64kbps
+  ayahs checked : 564
+  passed        : 564 (100.0%)
+  excluded      : 0
+  status        : PASS
+
+Abdul_Basit_Murattal_64kbps
+  ayahs checked : 564
+  passed        : 559 (99.1%)
+  excluded      : 5
+  status        : PASS
+  excluded ayahs:
+    80:23  word 3: end <= start
+    83:25  word 1: suspiciously short (70ms)
+    83:27  word 1: suspiciously short (50ms)
+    96:7  word 0: end <= start
+    111:2  word 0: end <= start
+
+Minshawy_Murattal_128kbps
+  ayahs checked : 564
+  passed        : 562 (99.6%)
+  excluded      : 2
+  status        : PASS
+  excluded ayahs:
+    105:4  word indices not contiguous from 0: [0, 2, 3]
+    109:5  word 3: suspiciously short (20ms)
+
+Abu_Bakr_Ash-Shaatree_128kbps
+  ayahs checked : 564
+  passed        : 563 (99.8%)
+  excluded      : 1
+  status        : PASS
+  excluded ayahs:
+    78:36  word 1: suspiciously short (50ms)
+
+Mohammad_al_Tablaway_128kbps
+  ayahs checked : 564
+  passed        : 564 (100.0%)
+  excluded      : 0
+  status        : PASS
+
+Hani_Rifai_192kbps
+  ayahs checked : 564
+  passed        : 558 (98.9%)
+  excluded      : 6
+  status        : PASS
+  excluded ayahs:
+    78:36  word 1: suspiciously short (20ms)
+    82:18  word 1: suspiciously short (50ms)
+    96:7  word indices not contiguous from 0: [1, 2]
+    109:5  word 3: suspiciously short (60ms)
+    111:5  word indices not contiguous from 0: [0, 1, 2, 4]
+    112:1  words 0/1 overlap (1890 > 0)
+
+Saood_ash-Shuraym_128kbps
+  ayahs checked : 564
+  passed        : 557 (98.8%)
+  excluded      : 7
+  status        : PASS
+  excluded ayahs:
+    78:40  word indices not contiguous from 0: [0, 1, 2, 13, 14]
+    80:37  word 2: suspiciously short (10ms)
+    82:18  word 1: suspiciously short (50ms)
+    83:25  word 1: suspiciously short (70ms)
+    89:17  word 1: suspiciously short (70ms)
+    91:15  final segment ends at 5040ms but audio is 3134ms
+    96:7  word indices not contiguous from 0: [1, 2]
+
+=======================================================
+OVERALL: PASS
+
+Excluded ayahs are written to excluded_ayahs.json and must be skipped by all downstream stages. Do not repair timings.

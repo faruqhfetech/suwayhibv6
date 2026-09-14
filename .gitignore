@@ -1,6 +1,20 @@
 recs/
 cache/
-reference_library/
 runs/
 testset/
 __pycache__/
+
+# reference_library/: only the ~12GB of everyayah.com audio is excluded
+# -- it's fetched live from everyayah.com during training (see
+# train_stream.py's stream_local), not stored here or uploaded anywhere.
+# timings/ (cpfair/quran-align's own published data, 18MB) and the
+# small attribution/metadata files stay tracked, since manifest/*.csv
+# already references them and they cost nothing to keep in git.
+reference_library/Abdul_Basit_Murattal_64kbps/
+reference_library/Abu_Bakr_Ash-Shaatree_128kbps/
+reference_library/Alafasy_128kbps/
+reference_library/Hani_Rifai_192kbps/
+reference_library/Husary_64kbps/
+reference_library/Minshawy_Murattal_128kbps/
+reference_library/Mohammad_al_Tablaway_128kbps/
+reference_library/Saood_ash-Shuraym_128kbps/
