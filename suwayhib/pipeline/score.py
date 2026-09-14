@@ -58,6 +58,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from ..core import boundary as BND
 from ..core import model as M
 from ..core import phones as P
 from ..core import reftext as RT
@@ -72,7 +73,26 @@ SR = 16000
 # checkpoint
 # --------------------------------------------------------------------------
 
-def load_checkpoint(path, device):
+def load_checkpoint(path, device, return_meta=False):
+    """Load a phone-head checkpoint written by EITHER trainer.
+
+    train/train.py writes {"epoch", "val", ...}; train/train_stream*.py
+    writes {"step", ...} and carries "val" only on the checkpoints that
+    ran a validation pass. The provenance line below used to read
+    ck["epoch"] and ck["val"] unconditionally, so it raised
+    KeyError: 'epoch' on EVERY streaming checkpoint -- including both
+    commands train_stream prints when it finishes:
+
+        python -m suwayhib.pipeline.score testset --ckpt <ckpt> ...
+        python -m suwayhib.pipeline.decode sweep --ckpt <ckpt> ...
+
+    Both now report whichever provenance fields are actually present.
+
+    return_meta=True additionally returns the raw checkpoint dict, for
+    callers that need the boundary operating point or the selection
+    metadata. It is opt-in so the existing 4-tuple unpacking at every
+    other call site keeps working unchanged.
+    """
     ck = torch.load(path, map_location=device, weights_only=False)
     cfg = ck["config"]
     model = M.PhoneHead(
@@ -83,9 +103,40 @@ def load_checkpoint(path, device):
     model.eval().to(device)
     vocab = ck["vocab"]
     inv = {v: k for k, v in vocab.items()}
-    print(f"loaded {path}  epoch {ck['epoch']}  val {ck['val']:.4f}")
+
+    # Provenance, from whichever keys this checkpoint actually has.
+    where = (f"epoch {ck['epoch']}" if "epoch" in ck else
+             f"step {ck['step']}" if "step" in ck else "step ?")
+    bits = [f"loaded {path}", where]
+    if isinstance(ck.get("val"), (int, float)):
+        bits.append(f"val {ck['val']:.4f}")
+    if ck.get("select_on"):
+        # Which signal picked this checkpoint. Worth printing: a `best`
+        # selected on fused CTC+boundary loss and one selected on
+        # R-value are different checkpoints, and the difference is
+        # invisible from the filename.
+        bits.append(f"selected on {ck['select_on']}")
+    print("  ".join(bits))
     print(f"  layers {cfg['layers']}  dim {cfg['dim']}  blocks {cfg['blocks']}"
           f"  params {model.n_params()/1e6:.2f}M")
+
+    bnd = BND.operating_point(ck)
+    if bnd:
+        print(f"  boundary head: threshold {bnd['threshold']:.2f} tuned on "
+              f"the val slice at +/-{bnd['tol_frames']}fr "
+              f"({bnd['tol_ms']}ms) -- P {bnd['precision']:.3f} "
+              f"R {bnd['recall']:.3f} F1 {bnd['f1']:.3f} "
+              f"OS {bnd['os']:+.3f} R-value {bnd['rvalue']:.4f}")
+    elif model.boundary is not None:
+        # The head exists in the weights but carries no tuned operating
+        # point (any checkpoint from train.py or the original
+        # train_stream.py). Say so rather than letting a caller quietly
+        # assume 0.5, which on a pos_weight=20 head over-segments badly.
+        print("  boundary head: present, but this checkpoint stores no "
+              "tuned threshold -- word_ends() needs an explicit one")
+
+    if return_meta:
+        return model, vocab, inv, cfg, ck
     return model, vocab, inv, cfg
 
 
@@ -96,21 +147,72 @@ def load_checkpoint(path, device):
 class LiveScorer:
     def __init__(self, ckpt_path, device="cuda"):
         self.device = torch.device(device)
-        self.model, self.vocab, self.inv, self.cfg = load_checkpoint(
-            ckpt_path, self.device)
+        self.model, self.vocab, self.inv, self.cfg, ck = load_checkpoint(
+            ckpt_path, self.device, return_meta=True)
         self.layers = self.cfg["layers"]
         self.enc = E.Encoder(device=device, fp16=(self.device.type == "cuda"),
                              max_layer=max(self.layers))
+        # The boundary operating point this checkpoint was selected at,
+        # or None for checkpoints that predate it. Public: decode.py
+        # reads it so a caller never has to re-guess the threshold.
+        self.bnd = BND.operating_point(ck)
 
-    def phones(self, audio):
-        """Raw float32 audio -> decoded phone symbol list (greedy CTC)."""
+    def _forward(self, audio):
+        """Raw float32 audio -> the model's full output dict for it.
+
+        Factored out of phones() so boundary_probs() reuses exactly the
+        same encoder call and the same feature layers -- the boundary
+        head was trained on those layers, and reading it off anything
+        else would silently mean something different.
+        """
         feats = self.enc([audio], self.layers)[0]          # (T, L, D) fp16
         x = torch.from_numpy(feats.astype(np.float32)).unsqueeze(0).to(
             self.device)
         with torch.no_grad():
-            logits = self.model(x)["logits"][0]             # (T, C)
-            ids = logits.argmax(dim=-1).cpu().tolist()
-        return greedy_ctc_decode(ids, self.inv)
+            return self.model(x)
+
+    def phones(self, audio):
+        """Raw float32 audio -> decoded phone symbol list (greedy CTC)."""
+        logits = self._forward(audio)["logits"][0]          # (T, C)
+        return greedy_ctc_decode(logits.argmax(dim=-1).cpu().tolist(),
+                                 self.inv)
+
+    def boundary_probs(self, audio):
+        """Raw float32 audio -> per-frame P(word ends here), or None if
+        this checkpoint has no boundary head."""
+        out = self._forward(audio)
+        b = out.get("boundary")
+        if b is None:
+            return None
+        return torch.sigmoid(b[0].float()).cpu().numpy()
+
+    def word_ends(self, audio, threshold=None):
+        """Raw float32 audio -> predicted word-end FRAME indices.
+
+        threshold defaults to the one stored in the checkpoint by
+        train_stream_bndmetrics.py, which is the value its validation
+        sweep selected. There is deliberately no 0.5 fallback: the head
+        is trained with pos_weight=20, i.e. deliberately miscalibrated
+        towards firing, so 0.5 over-segments and an over-segmenting
+        boundary stream is exactly the failure R-value exists to catch.
+        Pass one explicitly for a checkpoint that stores none.
+
+        Runs of above-threshold frames collapse to their middle frame,
+        the same post-processing core/boundary.py scores with -- so what
+        comes back here is what the reported R-value was measured on.
+        """
+        prob = self.boundary_probs(audio)
+        if prob is None:
+            return None
+        if threshold is None:
+            if not self.bnd:
+                raise ValueError(
+                    "this checkpoint stores no tuned boundary threshold "
+                    "(pre-dates --select-on rvalue); pass threshold=... "
+                    "explicitly")
+            threshold = self.bnd["threshold"]
+        valid = np.ones(len(prob), dtype=bool)
+        return BND.collapse_runs(prob, valid, threshold)
 
 
 def greedy_ctc_decode(ids, inv):

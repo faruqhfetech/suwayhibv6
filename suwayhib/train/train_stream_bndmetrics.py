@@ -131,6 +131,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..core import bootstrap as B
+from ..core import boundary as BND
 from ..core import model as M
 from ..core import phones as P
 from ..core import reftext as RT
@@ -138,7 +139,10 @@ from ..pipeline import extract as E
 from . import phase2 as PH2
 
 SR = 16000
-FRAMES_PER_SEC = 50
+# Single definition in core/boundary.py -- boundary targets are
+# built from this, and pipeline/score.py decodes them back with the
+# same constant.
+FRAMES_PER_SEC = BND.FRAMES_PER_SEC
 
 
 # --------------------------------------------------------------------------
@@ -615,181 +619,37 @@ def boundary_loss(pred, target, mask, pos_weight):
 
 
 # --------------------------------------------------------------------------
-# boundary METRICS (added in this copy -- items 2/3 of the review)
+# boundary METRICS
 # --------------------------------------------------------------------------
-# WHY THIS EXISTS AT ALL.
+# MOVED to core/boundary.py. The logic (middle-frame cluster collapsing,
+# one-to-one tolerance matching, R-value, the threshold sweep) and the
+# full justification for measuring the head this way instead of reading
+# its loss now live there, because pipeline/score.py needs exactly the
+# same conventions at inference time and cannot import this module --
+# the import direction is train/ -> pipeline/ -> core/. Keeping two
+# copies of a threshold-and-tolerance convention is how an inference
+# path silently drifts away from the metric that selected the
+# checkpoint.
 #
-# boundary_loss above is a mask-mean of pos_weight-weighted BCE. Weighted
-# BCE is the standard *training* objective for frame-level boundary
-# detection, so nothing below replaces it -- but it is a bad *monitoring*
-# signal here, for a reason that is arithmetic rather than a matter of
-# taste. At logits ~ 0, (l * mask).sum() / mask.sum() evaluates to
-#
-#     ln2 * (1 - p + pos_weight * p)  =  ln2 * (1 + 19p)   [pos_weight=20]
-#
-# where p is the density of positive (word-end) frames in the batch.
-# torch's pos_weight scales ONLY the positive term (verified: at logit 0,
-# target=1 gives 20*ln2 = 13.86, target=0 gives ln2 = 0.693), so that
-# formula is exact, not an approximation. Measured over all 4,424 items
-# of manifest/manifest_clean.csv, p ranges 0.0057 (q0) to 0.042 (q100),
-# i.e. the composition term ALONE spans 0.77 -> 1.25 in printed-loss
-# units. Any real trend in head quality smaller than that is invisible,
-# and at --local-ratio 0.15 with --log-every 5 each printed `bnd` is the
-# mean of only ~1-2 supervised batches, so what you actually read is
-# which items happened to land in the window, not how the head is doing.
-#
-# The speech-segmentation literature's answer is not to fix the loss
-# readout but to monitor a tolerance-based boundary metric instead:
-#
-#   * Rasanen et al., "An improved speech segmentation quality measure:
-#     the R-value", Interspeech 2009 -- introduces R-value precisely
-#     because "increases in phone boundary location detection rates are
-#     often due to increased over-segmentation levels and not to
-#     algorithmic improvements": a detector that fires every other frame
-#     buys recall, and therefore F1, for free. R-value is the metric that
-#     refuses to reward that.
-#   * "Back to Supervision: Boosting Word Boundary Detection through
-#     Frame Classification" (arXiv:2411.10423) -- the closest published
-#     analogue to this setup (supervised frame classification for WORD
-#     boundaries). It reports P/R/F/OS/R-value at a 40 ms tolerance on
-#     Buckeye, selects checkpoints on validation R-value ("we saved the
-#     weights of models at the best validation R-value"), collapses
-#     boundary clusters by taking the middle frame -- and reports no loss
-#     curve at all.
-#   * "Towards Trustworthy Phoneme Boundary Detection..."
-#     (arXiv:2212.06387) -- the decision threshold is not 0.5, it is
-#     grid-searched on the validation set against R-value.
-#
-# All three of those design decisions are implemented below. Unlike
-# `bnd`, these numbers are invariant to positive-frame density, so they
-# can be compared across checkpoints without knowing what landed in the
-# batch.
-
-
-def _boundary_frames(prob, valid, threshold):
-    """-> list of predicted boundary frame indices for ONE item.
-
-    prob/valid are 1-D over frames. A contiguous run of above-threshold
-    frames is collapsed to its MIDDLE frame rather than emitting one
-    boundary per frame. This is the post-processing arXiv:2411.10423
-    uses, and it is not cosmetic: without it a single soft 5-frame-wide
-    peak counts as 5 insertions, which crushes precision and (via
-    OS = R/P - 1) the R-value, so the metric would end up measuring peak
-    WIDTH rather than peak PLACEMENT.
-    """
-    hot = (prob >= threshold) & valid
-    out, i, n = [], 0, len(hot)
-    while i < n:
-        if hot[i]:
-            j = i
-            while j + 1 < n and hot[j + 1]:
-                j += 1
-            out.append((i + j) // 2)
-            i = j + 1
-        else:
-            i += 1
-    return out
-
-
-def _match_boundaries(ref, hyp, tol):
-    """-> number of reference boundaries matched ONE-TO-ONE to a
-    predicted boundary within +/- tol frames.
-
-    The one-to-one constraint is the point. A many-to-one count lets
-    insertions sitting near a true boundary cancel deletions elsewhere
-    and report misleadingly high precision AND recall at the same time
-    (the failure mode arXiv:2212.06387 flags). Greedy nearest-first
-    matching, each hypothesis consumable exactly once.
-    """
-    used = [False] * len(hyp)
-    hits = 0
-    for r in ref:
-        best, best_d = -1, tol + 1
-        for k, h in enumerate(hyp):
-            if used[k]:
-                continue
-            d = abs(h - r)
-            if d <= tol and d < best_d:
-                best, best_d = k, d
-        if best >= 0:
-            used[best] = True
-            hits += 1
-    return hits
-
-
-def _r_value(recall, precision):
-    """Rasanen et al. 2009, in the 0..1-normalised form the modern papers
-    use. OS = R/P - 1 is the over-segmentation rate; r1 is the distance
-    to the ideal (R=1, OS=0) operating point and r2 the distance to the
-    OS = R - 1 line. The only way to score 1.0 is perfect recall with
-    zero over-segmentation -- which is exactly why this, and not F1, is
-    the checkpoint-selection metric below.
-
-    -> (rvalue, os)
-    """
-    if precision <= 0.0:
-        # No predictions, or none correct: OS is undefined (R/P divides
-        # by zero). Report the worst score rather than raising -- an
-        # untrained head genuinely does sit here for the first few
-        # hundred steps, and a checkpoint callback must not crash there.
-        return 0.0, -1.0
-    os_ = recall / precision - 1.0
-    r1 = math.sqrt((1.0 - recall) ** 2 + os_ ** 2)
-    r2 = (-os_ + recall - 1.0) / math.sqrt(2.0)
-    return 1.0 - (abs(r1) + abs(r2)) / 2.0, os_
+# The short version of why `bnd` is not the signal to watch: it is a
+# mask-mean of pos_weight-weighted BCE, which at logits ~ 0 equals
+# ln2 * (1 + 19p) for positive-frame density p, and p varies 0.0057 to
+# 0.042 across this corpus -- so batch composition alone moves it
+# 0.77 -> 1.25, wider than any trend it could show. See core/boundary.py.
 
 
 def boundary_metrics(pred, target, mask, tol_frames, thresholds):
-    """Tolerance-based boundary P/R/F1/OS/R-value over a whole batch,
-    swept over `thresholds`.
+    """Tolerance-based boundary P/R/F1/OS/R-value; see core/boundary.py.
 
-    -> dict for the threshold with the best R-value (plus the full sweep
-    under "sweep"), or None if there is nothing to score against.
-
-    The sweep is the arXiv:2212.06387 point: the operating threshold is a
-    tuned hyperparameter, not 0.5, and re-tuning it on the SAME fixed
-    held-out slice at every checkpoint is what keeps the reported number
-    comparable across checkpoints instead of entangling "the head got
-    better" with "0.5 happens to suit this calibration".
-
-    Counts are pooled over items BEFORE the metrics are computed
-    (micro-averaging), so one short item with two word ends cannot swing
-    the result the way it swings `bnd`.
-
-    `mask` -- not `lens` -- defines the valid region, so this counts
-    frames on exactly the footing boundary_loss does and never scores a
-    prediction made in right-padding.
+    Thin adapter: takes the head's raw LOGITS as a torch tensor (what
+    model(...)["boundary"] returns) and hands core.boundary probabilities
+    as numpy, which is what it works in.
     """
-    prob = torch.sigmoid(pred.float()).detach().cpu().numpy()
-    tgt = target.detach().cpu().numpy()
-    valid = mask.detach().cpu().numpy() > 0
-    B = prob.shape[0]
-
-    sweep = []
-    for th in thresholds:
-        n_ref = n_hyp = hits = 0
-        for i in range(B):
-            if not valid[i].any():
-                continue
-            ref = np.flatnonzero((tgt[i] > 0.5) & valid[i]).tolist()
-            hyp = _boundary_frames(prob[i], valid[i], th)
-            n_ref += len(ref)
-            n_hyp += len(hyp)
-            hits += _match_boundaries(ref, hyp, tol_frames)
-        if n_ref == 0:
-            return None
-        rec = hits / n_ref
-        prec = hits / n_hyp if n_hyp else 0.0
-        f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
-        rv, os_ = _r_value(rec, prec)
-        sweep.append({"threshold": float(th), "precision": prec,
-                      "recall": rec, "f1": f1, "os": os_, "rvalue": rv,
-                      "n_ref": n_ref, "n_hyp": n_hyp, "hits": hits})
-    if not sweep:
-        return None
-    best = max(sweep, key=lambda d: d["rvalue"])
-    return {**best, "sweep": sweep, "tol_frames": tol_frames,
-            "tol_ms": int(round(1000 * tol_frames / FRAMES_PER_SEC))}
+    return BND.metrics(
+        torch.sigmoid(pred.float()).detach().cpu().numpy(),
+        target.detach().cpu().numpy(),
+        mask.detach().cpu().numpy(),
+        tol_frames=tol_frames, thresholds=thresholds)
 
 
 def compute_val_loss(model, enc, val_items, layers, device, max_frames,
@@ -847,8 +707,8 @@ def compute_val_loss(model, enc, val_items, layers, device, max_frames,
             # operating point sits well away from 0.5 and drifts during
             # training. Sweeping costs nothing measurable next to the
             # encoder forward that produced these logits.
-            ths = thresholds if thresholds is not None else \
-                [round(0.05 * k, 2) for k in range(1, 20)]
+            ths = (thresholds if thresholds is not None
+                   else BND.DEFAULT_THRESHOLDS)
             metrics = boundary_metrics(out["boundary"], bt, bm,
                                        tol_frames, ths)
         val = float(lc.item() + lam_bnd * float(lb.item()))
@@ -1663,7 +1523,8 @@ def add_common(p):
 
     p.add_argument("--lam-bnd", type=float, default=1.0)
     p.add_argument("--pos-weight", type=float, default=20.0)
-    p.add_argument("--bnd-tol-frames", type=int, default=2,
+    p.add_argument("--bnd-tol-frames", type=int,
+                   default=BND.DEFAULT_TOL_FRAMES,
                    help="Tolerance, in frames, for a predicted word "
                         "boundary to count as correct in the val "
                         "P/R/F1/OS/R-value metrics. Frames are 20ms "

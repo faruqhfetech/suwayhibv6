@@ -758,8 +758,31 @@ def prepare(a):
         words = [[scorer.vocab[p] for p in P.word_to_phones_iqra(w)
                   if p in scorer.vocab]
                  for w in rt.words(d["surah"], d["ayah"])]
-        items.append((d, words, frame_logp(scorer, S.load_audio(path))))
+        audio = S.load_audio(path)
+        item = [d, words, frame_logp(scorer, audio)]
+        if getattr(a, "show_bnd", False):
+            # The boundary head's own opinion about where words end, at
+            # the threshold its training run tuned (score.py's
+            # word_ends). Kept on the item rather than recomputed at
+            # print time so it comes from THIS audio, through the same
+            # encoder call and the same feature layers as the logp.
+            item.append(_bnd_ends(scorer, audio))
+        items.append(tuple(item))
     return items
+
+
+def _bnd_ends(scorer, audio):
+    """-> predicted word-end frames, or None when unavailable.
+
+    Never guesses a threshold. The head is trained with pos_weight=20,
+    so it is deliberately biased towards firing and an arbitrary 0.5
+    over-segments -- see core/boundary.py. A checkpoint with no tuned
+    threshold therefore reports nothing rather than something wrong.
+    """
+    try:
+        return scorer.word_ends(audio)
+    except ValueError:
+        return None
 
 
 def prepare_testset(a):
@@ -848,7 +871,9 @@ def cmd_run(a):
               f"({a.dwell_cap * 20}ms)   commit lag {a.commit_lag} frames "
               f"({a.commit_lag * 20}ms)   min {a.min_frames_per_phone} "
               f"frames/phone\n")
-    for d, words, logp in items:
+    for item in items:
+        d, words, logp = item[0], item[1], item[2]
+        bnd_ends = item[3] if len(item) > 3 else None
         trace, cursor, dec = decode_utterance(
             words, logp, tau=a.tau, dwell_cap=a.dwell_cap,
             commit_lag=a.commit_lag,
@@ -857,7 +882,29 @@ def cmd_run(a):
         print(f"{d['file']:<16} [{d['kind']:<9}] words={len(words)}  "
               f"confirmed={len(trace)}  cursor={cursor}")
         for t, wi in trace:
-            print(f"    t={t:4d} ({t / FRAMES_PER_SEC:5.2f}s)  word {wi}")
+            extra = ""
+            if bnd_ends:
+                # Nearest predicted word end to this commit, and the
+                # signed frame delta. These are two DIFFERENT quantities:
+                # t is when the lattice became confident enough to
+                # confirm word wi (after --commit-lag frames of
+                # hysteresis), while bnd is where the boundary head
+                # thinks the word acoustically ended. Comparing them is
+                # the point of the flag; no particular delta is asserted
+                # here as correct, because that has not been measured on
+                # real audio for this model.
+                near = min(bnd_ends, key=lambda e: abs(e - t))
+                extra = (f"   bnd t={near:4d} "
+                         f"({near / FRAMES_PER_SEC:5.2f}s, "
+                         f"{near - t:+d}fr)")
+            print(f"    t={t:4d} ({t / FRAMES_PER_SEC:5.2f}s)  word {wi}"
+                  f"{extra}")
+        if bnd_ends is not None and getattr(a, "show_bnd", False):
+            print(f"    boundary head: {len(bnd_ends)} word ends predicted "
+                  f"vs {len(words)} reference words")
+        elif getattr(a, "show_bnd", False):
+            print("    boundary head: unavailable (no head in this "
+                  "checkpoint, or no tuned threshold stored)")
         if cursor < len(words) and dec.lattice is not None:
             if accept_fn:
                 p = accept_fn(dec.lattice)
@@ -1021,6 +1068,14 @@ def main():
     r = sub.add_parser("run")
     common(r)
     r.add_argument("--tau", type=float, default=-1.5)
+    r.add_argument("--show-bnd", action="store_true",
+                   help="Also report the boundary head's predicted "
+                        "word-end frames next to each committed word, at "
+                        "the threshold stored in the checkpoint by "
+                        "train_stream_bndmetrics.py. Off by default so "
+                        "the normal output format is unchanged; needs a "
+                        "checkpoint carrying a tuned threshold "
+                        "(--select-on rvalue).")
     r.set_defaults(func=cmd_run)
 
     s = sub.add_parser("sweep")
