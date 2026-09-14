@@ -3,6 +3,7 @@ cache/
 runs/
 testset/
 __pycache__/
+reference_library.zip
 
 # reference_library/: only the ~12GB of everyayah.com audio is excluded
 # -- it's fetched live from everyayah.com during training (see
