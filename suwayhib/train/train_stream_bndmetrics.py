@@ -303,7 +303,7 @@ def local_ayah_keys(manifest):
 
 def stream_local(manifest, lib, text_path, audio_cache=None, max_items=None,
                  everyayah_cache=None, include_keys=None, exclude_keys=None,
-                 worker_id=0, num_workers=1):
+                 worker_id=0, num_workers=1, shuffle_seed=None):
     """Yield reference-library items WITH word-end frames.
 
     This is the only source of boundary supervision -- see the module
@@ -335,6 +335,33 @@ def stream_local(manifest, lib, text_path, audio_cache=None, max_items=None,
     Applied to validation extraction too for consistency, though that
     is always called with num_workers=1 in practice (see run_training)
     since the validation slice is meant to be materialised once, whole.
+
+    shuffle_seed: permute the key order instead of walking it sorted.
+    MEASURED REASON, not a precaution. Sorted keys are
+    (reciter, surah, ayah), so consecutive items are consecutive ayahs
+    of the same surah and have very similar word density. Over the
+    manifest the lag-1 autocorrelation of positive-frame density in
+    sorted order is +0.669 (shuffled control: +0.019), and it is still
+    +0.518 at lag 50. Because the boundary loss is a mask-mean of
+    pos_weight-weighted BCE -- which scales as ln2 * (1 + 19p) in the
+    density p, see core/boundary.py -- walking that order makes the
+    printed `bnd` drift smoothly across dozens of consecutive log
+    windows with no change in head quality whatsoever. A 12-item
+    running window over the real manifest drifts 0.507 -> 1.079 in
+    implied loss from composition alone. That is not noise that
+    averages out; it is a deterministic ramp that reads exactly like a
+    training trend.
+
+    The permutation is seeded from shuffle_seed ONLY -- deliberately
+    not mixed with worker_id -- so every worker computes the SAME
+    permutation and the modulo sharding below still carves disjoint,
+    exhaustive slices out of it. Seeding per worker would give each a
+    different permutation, and the index-modulo shard would then
+    overlap and drop items silently.
+
+    The validation split is unaffected: val_keys comes from
+    local_ayah_keys(), which is sorted independently of this, and is
+    applied here as a key-membership filter rather than by position.
     """
     rt = RT.RefText(text_path)
     cache = None
@@ -342,14 +369,25 @@ def stream_local(manifest, lib, text_path, audio_cache=None, max_items=None,
         cache = B.AudioCache(audio_cache)
 
     ayahs = B.group_ayahs(B.load_manifest(manifest))
+
+    # Filter FIRST, then shard, so the shards stay balanced: sharding a
+    # list that still contains the excluded val keys would hand one
+    # worker more real work than another whenever the excluded keys are
+    # not spread evenly over the residues.
+    order = sorted(ayahs.keys())
+    if include_keys is not None:
+        order = [k for k in order if k in include_keys]
+    if exclude_keys is not None:
+        order = [k for k in order if k not in exclude_keys]
+    if shuffle_seed is not None:
+        # Same permutation on every worker -- see the docstring.
+        np.random.default_rng(shuffle_seed).shuffle(order)
+    if num_workers > 1:
+        order = order[worker_id::num_workers]
+
     n = 0
-    for i, (key, words) in enumerate(sorted(ayahs.items())):
-        if num_workers > 1 and i % num_workers != worker_id:
-            continue
-        if include_keys is not None and key not in include_keys:
-            continue
-        if exclude_keys is not None and key in exclude_keys:
-            continue
+    for key in order:
+        words = ayahs[key]
         if max_items and n >= max_items:
             return
         rec, surah, ayah = key
@@ -820,11 +858,26 @@ def build_streams(a, vocab, stage, val_keys=None, worker_id=0, num_workers=1):
         # supervision would silently disappear for the entire remainder
         # while the banner still printed the configured ratio. See
         # cycle()'s docstring for the measurement that caught this.
-        streams.append(cycle(
-            lambda: stream_local(a.manifest, a.lib, a.text, a.audio_cache,
-                                 everyayah_cache=a.everyayah_cache,
-                                 exclude_keys=val_keys, worker_id=worker_id,
-                                 num_workers=num_workers)))
+        #
+        # RESHUFFLED PER PASS. cycle() calls this factory again each time
+        # the library is exhausted, so the counter gives every pass its
+        # own permutation. A single fixed permutation would already kill
+        # the density autocorrelation that motivates the shuffle (see
+        # stream_local), but repeating the identical item order on every
+        # one of many passes through a 4,400-item set is a second, needless
+        # correlation -- the model would see the same neighbours in the
+        # same batches every time.
+        local_pass = [0]
+
+        def _local_stream():
+            local_pass[0] += 1
+            return stream_local(a.manifest, a.lib, a.text, a.audio_cache,
+                                everyayah_cache=a.everyayah_cache,
+                                exclude_keys=val_keys, worker_id=worker_id,
+                                num_workers=num_workers,
+                                shuffle_seed=a.seed + local_pass[0])
+
+        streams.append(cycle(_local_stream))
         weights.append(a.local_ratio)
 
     return streams, weights
