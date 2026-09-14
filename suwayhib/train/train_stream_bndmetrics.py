@@ -301,6 +301,103 @@ def local_ayah_keys(manifest):
     return sorted(B.group_ayahs(B.load_manifest(manifest)).keys())
 
 
+def build_val_split(manifest, val_items, holdout_reciters, seed):
+    """-> (val_keys, train_exclude_keys, note)
+
+    WHAT WAS WRONG BEFORE. This used to be `set(local_ayah_keys(m)[-N:])`
+    -- the last N keys of a list sorted by (reciter, surah, ayah). A
+    sorted suffix is not a sample. Measured on manifest_clean.csv:
+
+      --val-items 16 -> 16 items, ONE reciter (Saood), surahs 111-114
+      --val-items 64 -> 64 items, ONE reciter (Saood), surahs 102-114
+
+    i.e. one voice out of eight, and only the short closing surahs:
+    1.56x the corpus positive-frame density at 0.60x the duration. And
+    because only those ayahs were withheld, that reciter's voice was
+    still trained on throughout -- an ayah-level hold-out wearing an
+    unseen-voice label.
+
+    The cost was measured, not hypothesised. On runs/stage3/stage1_best:
+      - scored 0.6478 R-value on its own val slice, 0.5472 on held-out
+        reciters (suwayhib.tools.bnd_eval, 153 boundaries);
+      - the threshold tuned on that slice (0.75) lost 0.116 R-value when
+        applied to unseen voices, versus the threshold swept on them;
+      - --select-on rvalue picked step 170 over step 200, and step 200
+        was the better checkpoint on unseen voices.
+
+    So selection and threshold tuning were both being done on a signal
+    that does not transfer.
+
+    WHAT THIS DOES INSTEAD. Hold out whole RECITERS, and sample the val
+    items from them at random. This is not a new idea in this project --
+    train.py already replaced its random split with a reciter-held-out
+    one, and its comment calls the old behaviour "a real methodological
+    hole"; testset/meta.json declares the same holdout_reciters, and
+    every evaluation honours it. train_stream simply never inherited
+    that. Now the in-run number, suwayhib.tools.bnd_eval, and the
+    testset all mean the same thing.
+
+    The whole held-out reciters' items are excluded from training, not
+    just the sampled ones -- otherwise the voice is seen and the number
+    measures memorisation. On this manifest that is 1,106 of 4,424 local
+    items (25%), which at --local-ratio 0.15 costs about 3.75% of the
+    stream. That is the price of a val number that transfers.
+
+    holdout_reciters empty -> fall back to a seeded random sample across
+    ALL reciters, excluding only the sampled items. Still far better
+    than a sorted suffix (no surah or density bias), but the voices are
+    seen; the returned note says so, and the banner prints it.
+    """
+    keys = local_ayah_keys(manifest)
+    if not keys:
+        return set(), set(), "no local keys"
+    if holdout_reciters:
+        pool = [k for k in keys
+                if any(h.lower() in k[0].lower() for h in holdout_reciters)]
+        if not pool:
+            return (set(), set(),
+                    f"NO reciter matched {holdout_reciters!r} -- validation "
+                    f"disabled rather than silently falling back")
+        exclude = set(pool)
+        note = (f"{len(pool)} items from held-out reciter(s) "
+                f"{'/'.join(holdout_reciters)} kept out of training "
+                f"entirely; voices never heard")
+    else:
+        pool = list(keys)
+        exclude = None          # filled in below: only the sampled items
+        note = ("sampled across ALL reciters -- ayah-level hold-out, so "
+                "these VOICES are still trained on")
+    rng = np.random.default_rng(seed)
+    idx = rng.permutation(len(pool))[:min(val_items, len(pool))]
+    val_keys = {pool[int(i)] for i in idx}
+    if exclude is None:
+        exclude = set(val_keys)
+    return val_keys, exclude, note
+
+
+def describe_keys(keys, manifest_ayahs):
+    """-> one line describing a key set's reciter/surah/density makeup.
+
+    Printed in the banner. The recurring failure in this trainer has been
+    settings whose effect was invisible (head-only warmup consuming an
+    entire run; a val slice that was one reciter's closing surahs), so a
+    split that shapes every reported number states what it contains.
+    """
+    from collections import Counter
+    recs = Counter(r for r, _, _ in keys)
+    surahs = sorted({s for _, s, _ in keys})
+    dens = []
+    for k in keys:
+        e = [x["end_ms"] * FRAMES_PER_SEC // 1000 for x in manifest_ayahs[k]]
+        t = max(e) + 1
+        dens.append(len([x for x in e if x < t]) / t)
+    span = (f"{surahs[0]}-{surahs[-1]}" if len(surahs) > 1
+            else str(surahs[0]) if surahs else "-")
+    return (f"{len(keys)} items, {len(recs)} reciter(s), surahs {span} "
+            f"({len(surahs)} distinct), mean density "
+            f"{float(np.mean(dens)):.4f}" if dens else f"{len(keys)} items")
+
+
 def stream_local(manifest, lib, text_path, audio_cache=None, max_items=None,
                  everyayah_cache=None, include_keys=None, exclude_keys=None,
                  worker_id=0, num_workers=1, shuffle_seed=None):
@@ -1367,20 +1464,27 @@ def run_training(a, stage):
     # every time, or a lucky/unlucky draw could look like real
     # progress. Only possible when the local library is actually in
     # use; streamed HF sources have no such fixed slice to hold out.
-    val_keys, val_prepared = None, []
+    val_keys, train_exclude, val_prepared = None, None, []
     if a.local_ratio > 0 and Path(a.manifest).exists() and a.val_items > 0:
-        keys = local_ayah_keys(a.manifest)
-        val_keys = set(keys[-a.val_items:]) if keys else set()
+        holdout = [x.strip() for x in a.val_holdout_reciters.split(",")
+                   if x.strip()]
+        val_keys, train_exclude, note = build_val_split(
+            a.manifest, a.val_items, holdout, a.seed)
         val_raw = stream_local(a.manifest, a.lib, a.text, a.audio_cache,
                                everyayah_cache=a.everyayah_cache,
                                include_keys=val_keys)
         val_prepared = [x for x in (prepare_item(i, vocab) for i in val_raw)
                         if x]
         if is_main:
-            print(f"validation : {len(val_prepared)} held-out local items "
-                  f"(never trained on)\n")
+            print(f"validation : {len(val_prepared)} items -- {note}")
+            if val_keys:
+                print(f"             {describe_keys(val_keys, B.group_ayahs(B.load_manifest(a.manifest)))}")
+            print()
 
-    dataset = StreamDataset(a, vocab, stage, val_keys, rank=rank,
+    # train_exclude is a SUPERSET of val_keys under reciter hold-out
+    # (every ayah by those reciters, not only the sampled ones). Passing
+    # val_keys here instead would leave the held-out voices in training.
+    dataset = StreamDataset(a, vocab, stage, train_exclude, rank=rank,
                             world_size=world_size)
     if a.num_workers > 0:
         src = torch.utils.data.DataLoader(
@@ -1815,6 +1919,18 @@ def add_common(p):
                         "supervision -- streamed HF data has none. Set 0 "
                         "to disable, which silently disables the boundary "
                         "head's learning signal too.")
+    p.add_argument("--val-holdout-reciters", default="Husary,Minshawy",
+                   help="Reciters held out of training entirely; "
+                        "--val-items are sampled from them, so the val "
+                        "number measures UNSEEN VOICES and is directly "
+                        "comparable to suwayhib.tools.bnd_eval and to "
+                        "testset/meta.json's declared holdout. Matches "
+                        "train.py's reciter-held-out split. Costs 25%% of "
+                        "the local library (1,106 of 4,424 items), ~3.75%% "
+                        "of the stream at --local-ratio 0.15. Empty "
+                        "string = seeded random sample across all "
+                        "reciters instead (no surah/density bias, but the "
+                        "voices are seen).")
     p.add_argument("--val-items", type=int, default=64,
                    help="local-library items held out of TRAINING "
                         "entirely and used as a fixed validation slice "
