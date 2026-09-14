@@ -192,15 +192,29 @@ class WordLattice:
         self.phone_frames = [0] * self.L
         self.n_frames = 0
         self.max_dwell = 0
+        # Backpointers and raw per-frame logp, kept for traceback() --
+        # see that method's docstring for why. Cheap: each entry is a
+        # reference into the caller's own logp array (never copied), and
+        # a short list of ints; a lattice is discarded after at most one
+        # word's worth of frames.
+        self._backptr = []
+        self._logp_history = []
 
     def _emit(self, i, logp):
         s = self.states[i]
         return logp[self.blank_id] if s == -1 else logp[s]
 
+    def _exit_idx(self):
+        idx = self.L - 1
+        if self.L >= 2 and self.score[self.L - 2] > self.score[idx]:
+            idx = self.L - 2
+        return idx
+
     def step(self, logp):
         prev, prev_pf = self.score, self.phone_frames
         new = [NEG_INF] * self.L
         new_pf = [0] * self.L
+        back = [-1] * self.L
 
         for i in range(self.L):
             # Each candidate is penalised independently based on ITS OWN
@@ -226,27 +240,30 @@ class WordLattice:
             cand_self = prev[i]
             if cand_self > NEG_INF and prev_pf[i] >= self.dwell_cap:
                 cand_self -= self.dwell_penalty
-            best, best_pf = cand_self, prev_pf[i]
+            best, best_pf, best_src = cand_self, prev_pf[i], i
 
             if i >= 1:
                 c = prev[i - 1]
                 if c > NEG_INF and prev_pf[i - 1] >= self.dwell_cap:
                     c -= self.dwell_penalty
                 if c > best:
-                    best, best_pf = c, prev_pf[i - 1]
+                    best, best_pf, best_src = c, prev_pf[i - 1], i - 1
             if skip_allowed(self.states, i):
                 c = prev[i - 2]
                 if c > NEG_INF and prev_pf[i - 2] >= self.dwell_cap:
                     c -= self.dwell_penalty
                 if c > best:
-                    best, best_pf = c, prev_pf[i - 2]
+                    best, best_pf, best_src = c, prev_pf[i - 2], i - 2
 
             if best == NEG_INF:
                 continue
             new[i] = best + self._emit(i, logp)
             new_pf[i] = best_pf + (1 if self.states[i] != -1 else 0)
+            back[i] = best_src
 
         self.score, self.phone_frames = new, new_pf
+        self._backptr.append(back)
+        self._logp_history.append(logp)
         self.n_frames += 1
         self.max_dwell = max(self.max_dwell,
                              max(new_pf) if new_pf else 0)
@@ -259,13 +276,90 @@ class WordLattice:
         The span counts only frames spent occupying a PHONE state --
         see __init__ for why silence must not lengthen it.
         """
-        idx = self.L - 1
-        if self.L >= 2 and self.score[self.L - 2] > self.score[idx]:
-            idx = self.L - 2
+        idx = self._exit_idx()
         raw = self.score[idx]
         if raw == NEG_INF:
             return NEG_INF, 0
         return raw, max(1, self.phone_frames[idx])
+
+    def traceback(self):
+        """-> [(frame_idx, state_idx), ...] for the CURRENT winning exit
+        path (same state exit_raw_and_span picks), one entry per frame
+        processed so far. Empty if the lattice has never reached a
+        scorable alignment.
+
+        WHY THIS EXISTS: exit_score is one aggregate number over the
+        whole word, which the tau sweep + a Phase 1 classifier trained
+        on that aggregate showed is already carrying nearly all the
+        signal a per-attempt SUMMARY can carry -- a classifier fed only
+        coarser/derived versions of the same number could not beat a
+        plain threshold on it. The literature's actual confidence-
+        estimation gain (Qiu et al. 2021 and similar) comes from
+        PER-TOKEN features, not per-utterance aggregates -- e.g. this
+        project's own "mean-vs-worst-token trap" (one badly-matched
+        phone barely moving an averaged score). Getting per-phone
+        posterior/entropy requires knowing which frames the winning
+        path actually assigned to which phone, which needs backpointers
+        -- not available from the forward scores alone.
+        """
+        idx = self._exit_idx()
+        if self.score[idx] == NEG_INF:
+            return []
+        path = []
+        t, cur = self.n_frames - 1, idx
+        while t >= 0:
+            path.append((t, cur))
+            cur = self._backptr[t][cur]
+            t -= 1
+        path.reverse()
+        return path
+
+    def phone_segments(self):
+        """-> [{state_idx, phone_id, frames: [t, ...]}, ...] for each
+        maximal run of consecutive frames occupying the same PHONE
+        state along the current winning path (blank runs excluded).
+        """
+        segs = []
+        cur = None
+        for t, s in self.traceback():
+            sym = self.states[s]
+            if sym == -1:
+                cur = None
+                continue
+            if cur is not None and cur["state_idx"] == s:
+                cur["frames"].append(t)
+            else:
+                cur = {"state_idx": s, "phone_id": sym, "frames": [t]}
+                segs.append(cur)
+        return segs
+
+    def phone_segment_stats(self):
+        """-> {worst_phone_score, worst_phone_entropy, n_rushed_phones,
+        blank_frac} computed over phone_segments(). worst_phone_score
+        is None (not the aggregate exit_score) if the lattice never
+        reached a scorable alignment -- callers should check that
+        before trusting the rest.
+        """
+        segs = self.phone_segments()
+        if not segs:
+            return {"worst_phone_score": None, "worst_phone_entropy": 0.0,
+                    "n_rushed_phones": 0, "blank_frac": 0.0}
+        seg_means, worst_entropy, n_rushed = [], 0.0, 0
+        for seg in segs:
+            rows = [self._logp_history[t] for t in seg["frames"]]
+            lps = [row[seg["phone_id"]] for row in rows]
+            seg_means.append(sum(lps) / len(lps))
+            if len(seg["frames"]) < 2:
+                n_rushed += 1
+            for row in rows:
+                p = np.exp(row)
+                worst_entropy = max(worst_entropy, float(-(p * row).sum()))
+        n_phone_frames = sum(len(s["frames"]) for s in segs)
+        return {"worst_phone_score": min(seg_means),
+                "worst_phone_entropy": worst_entropy,
+                "n_rushed_phones": n_rushed,
+                "blank_frac": 1.0 - (n_phone_frames /
+                                     max(self.n_frames, 1))}
 
     @property
     def exit_score(self):
@@ -334,11 +428,26 @@ class StreamingDecoder:
     forcing a full alignment against whatever partial audio has arrived
     so far can cross threshold on a partially-spoken word at loose
     settings, which is a calibration/architecture question (per-phone or
-    learned adaptive rejection), not a bounded-lifetime bug. Left open.
+    learned adaptive rejection), not a bounded-lifetime bug.
+
+    THAT OPEN ITEM IS WHAT `accept_fn` IS -- train.phase1's learned
+    rejection model, trained on WordLattice.phone_segment_stats()'s
+    per-phone features rather than just the aggregate exit_score.
+    Measured on testset/'s holdout split: at its chosen threshold it
+    strictly dominates the hand-set tau=-1.5 default on BOTH precision
+    AND recall (see train/phase1.py's docstring and training output for
+    the numbers) -- not a huge margin, but a real, held-out-reciter-
+    validated one, and the first fix in this class's history that
+    survived the sweep rather than being disproven by it. Pass a
+    callable (lattice -> P(accept)) as `accept_fn` -- e.g.
+    train.phase1.load_model(path) -- to use it instead of tau. Leaving
+    it None (the default) reproduces the exact original tau-only
+    behaviour, so nothing that already worked changes unless asked.
     """
 
     def __init__(self, words, blank_id, tau=-1.5, dwell_cap=40,
-                 commit_lag=8, stall_lag=60, min_frames_per_phone=2):
+                 commit_lag=8, stall_lag=60, min_frames_per_phone=2,
+                 accept_fn=None, accept_threshold=0.5):
         self.words = words
         self.blank_id = blank_id
         self.tau = tau
@@ -346,6 +455,8 @@ class StreamingDecoder:
         self.commit_lag = commit_lag
         self.stall_lag = stall_lag
         self.min_frames_per_phone = min_frames_per_phone
+        self.accept_fn = accept_fn
+        self.accept_threshold = accept_threshold
 
         self.cursor = 0
         self.confirmed = []
@@ -372,7 +483,12 @@ class StreamingDecoder:
 
         n_phones = (self.lattice.L - 1) // 2
         min_frames = max(2, n_phones * self.min_frames_per_phone)
-        above = s > self.tau and self.lattice.n_frames >= min_frames
+        if self.lattice.n_frames < min_frames:
+            above = False
+        elif self.accept_fn is not None:
+            above = self.accept_fn(self.lattice) >= self.accept_threshold
+        else:
+            above = s > self.tau
 
         self._above = self._above + 1 if above else 0
         self._below = 0 if above else self._below + 1
@@ -392,10 +508,12 @@ class StreamingDecoder:
 
 
 def decode_utterance(words, logp, blank_id=0, tau=-1.5, dwell_cap=40,
-                     commit_lag=8, stall_lag=60, min_frames_per_phone=2):
+                     commit_lag=8, stall_lag=60, min_frames_per_phone=2,
+                     accept_fn=None, accept_threshold=0.5):
     """-> (confirmed [(frame, word_idx)], final cursor, decoder)."""
     dec = StreamingDecoder(words, blank_id, tau, dwell_cap, commit_lag,
-                           stall_lag, min_frames_per_phone)
+                           stall_lag, min_frames_per_phone, accept_fn,
+                           accept_threshold)
     trace = []
     for t in range(logp.shape[0]):
         ev = dec.step(logp[t])
@@ -706,25 +824,50 @@ def _prepare_any(a):
     return prepare_testset(a) if a.source == "testset" else prepare(a)
 
 
+def _maybe_accept_fn(a):
+    """Lazy import -- decode.py must not depend on train.phase1 (or its
+    sklearn dependency) at module load time just because this ONE flag
+    exists; everything that does not pass --phase1-model behaves exactly
+    as before this feature was added."""
+    if not getattr(a, "phase1_model", None):
+        return None
+    from ..train import phase1 as PH1
+    return PH1.load_model(a.phase1_model)
+
+
 def cmd_run(a):
     items = _prepare_any(a)
-    print(f"\ntau {a.tau}   dwell cap {a.dwell_cap} frames "
-          f"({a.dwell_cap * 20}ms)   commit lag {a.commit_lag} frames "
-          f"({a.commit_lag * 20}ms)   min {a.min_frames_per_phone} "
-          f"frames/phone\n")
+    accept_fn = _maybe_accept_fn(a)
+    if accept_fn:
+        print(f"\nusing learned rejection model {a.phase1_model} "
+              f"(threshold {a.phase1_threshold})   dwell cap "
+              f"{a.dwell_cap} frames   commit lag {a.commit_lag} frames "
+              f"  min {a.min_frames_per_phone} frames/phone\n")
+    else:
+        print(f"\ntau {a.tau}   dwell cap {a.dwell_cap} frames "
+              f"({a.dwell_cap * 20}ms)   commit lag {a.commit_lag} frames "
+              f"({a.commit_lag * 20}ms)   min {a.min_frames_per_phone} "
+              f"frames/phone\n")
     for d, words, logp in items:
         trace, cursor, dec = decode_utterance(
             words, logp, tau=a.tau, dwell_cap=a.dwell_cap,
             commit_lag=a.commit_lag,
-            min_frames_per_phone=a.min_frames_per_phone)
+            min_frames_per_phone=a.min_frames_per_phone,
+            accept_fn=accept_fn, accept_threshold=a.phase1_threshold)
         print(f"{d['file']:<16} [{d['kind']:<9}] words={len(words)}  "
               f"confirmed={len(trace)}  cursor={cursor}")
         for t, wi in trace:
             print(f"    t={t:4d} ({t / FRAMES_PER_SEC:5.2f}s)  word {wi}")
         if cursor < len(words) and dec.lattice is not None:
-            print(f"    stuck at word {cursor}  "
-                  f"score {dec.lattice.exit_score:.3f} vs tau {a.tau}  "
-                  f"max dwell {dec.lattice.max_dwell} frames")
+            if accept_fn:
+                p = accept_fn(dec.lattice)
+                print(f"    stuck at word {cursor}  P(accept) {p:.3f} "
+                      f"vs threshold {a.phase1_threshold}  "
+                      f"max dwell {dec.lattice.max_dwell} frames")
+            else:
+                print(f"    stuck at word {cursor}  "
+                      f"score {dec.lattice.exit_score:.3f} vs tau {a.tau}  "
+                      f"max dwell {dec.lattice.max_dwell} frames")
     return 0
 
 
@@ -744,22 +887,35 @@ def cmd_sweep(a):
     SHAPE of the tradeoff; at that resolution a 1-in-6 disagreement
     cannot be told apart from one unlucky recording. testset/ is where
     the operating point should actually be picked from.
+
+    --phase1-model repurposes this same sweep to scan the LEARNED
+    model's accept_threshold instead of tau (tau is bypassed entirely
+    once accept_fn is set -- see StreamingDecoder.step). Reuses
+    --tau-lo/--tau-hi/--tau-step as the threshold range: pass something
+    like --tau-lo 0.5 --tau-hi 0.95 --tau-step 0.05 when combining the
+    two, since a probability threshold and a log-prob tau live on
+    different scales.
     """
     items = _prepare_any(a)
+    accept_fn = _maybe_accept_fn(a)
     lo, hi, step = a.tau_lo, a.tau_hi, a.tau_step
     taus = [round(lo + i * step, 3)
             for i in range(int(round((hi - lo) / step)) + 1)]
 
-    print(f"\n{'tau':>7} | {'correct confirmed':>18} | "
+    col1 = "threshold" if accept_fn else "tau"
+    print(f"\n{col1:>9} | {'correct confirmed':>18} | "
           f"{'error/weak stalled':>18} | {'artifact confirmed':>18}")
-    print("-" * 72)
+    print("-" * 74)
     for tau in taus:
         ok_c = tot_c = ok_e = tot_e = ok_a = tot_a = 0
         for d, words, logp in items:
-            _, cursor, _ = decode_utterance(
-                words, logp, tau=tau, dwell_cap=a.dwell_cap,
-                commit_lag=a.commit_lag,
-                min_frames_per_phone=a.min_frames_per_phone)
+            kwargs = dict(dwell_cap=a.dwell_cap, commit_lag=a.commit_lag,
+                         min_frames_per_phone=a.min_frames_per_phone)
+            if accept_fn:
+                kwargs.update(accept_fn=accept_fn, accept_threshold=tau)
+            else:
+                kwargs.update(tau=tau)
+            _, cursor, _ = decode_utterance(words, logp, **kwargs)
             full = cursor >= len(words)
             if d["kind"] == "correct":
                 tot_c += 1
@@ -770,7 +926,7 @@ def cmd_sweep(a):
             else:
                 tot_e += 1
                 ok_e += not full
-        print(f"{tau:7.2f} | {ok_c:8d}/{tot_c:<9d} | "
+        print(f"{tau:9.2f} | {ok_c:8d}/{tot_c:<9d} | "
               f"{ok_e:8d}/{tot_e:<9d} | {ok_a:8d}/{tot_a:<9d}")
 
     if a.source == "recs":
@@ -784,16 +940,22 @@ def cmd_sweep(a):
         print("unmeasured.")
 
     if a.by_error_type and a.source == "testset":
-        print(f"\nby error_type, at tau={a.tau}:")
+        label = (f"threshold={a.phase1_threshold}" if accept_fn
+                else f"tau={a.tau}")
+        print(f"\nby error_type, at {label}:")
         from collections import Counter
         seen, ok = Counter(), Counter()
         for d, words, logp in items:
             et = d.get("error_type") or ("clean" if d["kind"] == "correct"
                                          else "unknown")
-            _, cursor, _ = decode_utterance(
-                words, logp, tau=a.tau, dwell_cap=a.dwell_cap,
-                commit_lag=a.commit_lag,
-                min_frames_per_phone=a.min_frames_per_phone)
+            kwargs = dict(dwell_cap=a.dwell_cap, commit_lag=a.commit_lag,
+                         min_frames_per_phone=a.min_frames_per_phone)
+            if accept_fn:
+                kwargs.update(accept_fn=accept_fn,
+                             accept_threshold=a.phase1_threshold)
+            else:
+                kwargs.update(tau=a.tau)
+            _, cursor, _ = decode_utterance(words, logp, **kwargs)
             full = cursor >= len(words)
             want_full = (d["kind"] == "correct")
             seen[et] += 1
@@ -828,6 +990,20 @@ def main():
                             "elapsed -- rejects structurally-fastest-"
                             "possible alignments that complete before "
                             "real speech could have produced them")
+        p.add_argument("--phase1-model", default=None,
+                       help="path to a train.phase1-trained learned "
+                            "rejection model (e.g. runs/phase1/"
+                            "model_v2_mlp.pkl) -- when given, REPLACES "
+                            "tau with this model's P(accept) for the "
+                            "confirm decision. Omit to keep the "
+                            "original tau-only behaviour.")
+        p.add_argument("--phase1-threshold", type=float, default=0.85,
+                       help="P(accept) threshold for --phase1-model. "
+                            "0.85 is what testset/holdout measured as "
+                            "strictly better than tau=-1.5 on both "
+                            "precision and recall for the shipped "
+                            "model_v2_mlp -- re-measure with `sweep` "
+                            "for any other model.")
         # New, opt-in only: default "recs" reproduces exactly the
         # existing behaviour with zero args changed, so nothing that
         # already worked against recs/ is affected by adding this.
