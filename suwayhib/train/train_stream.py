@@ -126,6 +126,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -181,7 +182,7 @@ def scan_symbols(dataset, split, n=2000, label_col="phoneme_mis"):
 # --------------------------------------------------------------------------
 
 def stream_hf(dataset, split, label_col="phoneme_mis", max_hours=None,
-              shuffle_buffer=2000, seed=0):
+              shuffle_buffer=2000, seed=0, worker_id=0, num_workers=1):
     """Yield {audio, phones, source} from a streamed HF dataset.
 
     label_col defaults to phoneme_mis -- what was ACTUALLY said. See the
@@ -195,12 +196,22 @@ def stream_hf(dataset, split, label_col="phoneme_mis", max_hours=None,
     version mismatch that is not exotic (it is what plain `pip install`
     produced on this project). cast_column(..., decode=False) hands back
     raw bytes instead of asking `datasets` to decode them.
+
+    worker_id/num_workers: when running under DataLoader(num_workers>1)
+    (see StreamDataset), each worker process must see a DISJOINT slice
+    of this dataset -- otherwise every worker independently re-streams
+    and re-yields the SAME items, multiplying (not parallelising) the
+    data the training loop actually sees. .shard() must run BEFORE
+    .shuffle() (the library's own documented requirement) or the shards
+    would not correspond to disjoint underlying data.
     """
     from datasets import Audio, load_dataset
     ds = load_dataset(dataset, split=split, streaming=True)
+    if num_workers > 1:
+        ds = ds.shard(num_shards=num_workers, index=worker_id)
     ds = ds.cast_column("audio", Audio(decode=False))
     if shuffle_buffer:
-        ds = ds.shuffle(seed=seed, buffer_size=shuffle_buffer)
+        ds = ds.shuffle(seed=seed + worker_id, buffer_size=shuffle_buffer)
     budget = max_hours * 3600 if max_hours else None
     total = 0.0
     for r in ds:
@@ -287,7 +298,8 @@ def local_ayah_keys(manifest):
 
 
 def stream_local(manifest, lib, text_path, audio_cache=None, max_items=None,
-                 everyayah_cache=None, include_keys=None, exclude_keys=None):
+                 everyayah_cache=None, include_keys=None, exclude_keys=None,
+                 worker_id=0, num_workers=1):
     """Yield reference-library items WITH word-end frames.
 
     This is the only source of boundary supervision -- see the module
@@ -311,6 +323,14 @@ def stream_local(manifest, lib, text_path, audio_cache=None, max_items=None,
     stream (exclude_keys=val_keys, so validation items never train the
     model) and a fixed validation set (include_keys=val_keys, called
     once to materialise it -- see run_training).
+
+    worker_id/num_workers: shards the (already train/val-filtered) key
+    list by index modulo num_workers, so DataLoader(num_workers>1)
+    workers each cycle through a DISJOINT slice of the ~4,400 local
+    items instead of every worker redundantly cycling the whole thing.
+    Applied to validation extraction too for consistency, though that
+    is always called with num_workers=1 in practice (see run_training)
+    since the validation slice is meant to be materialised once, whole.
     """
     rt = RT.RefText(text_path)
     cache = None
@@ -319,7 +339,9 @@ def stream_local(manifest, lib, text_path, audio_cache=None, max_items=None,
 
     ayahs = B.group_ayahs(B.load_manifest(manifest))
     n = 0
-    for key, words in sorted(ayahs.items()):
+    for i, (key, words) in enumerate(sorted(ayahs.items())):
+        if num_workers > 1 and i % num_workers != worker_id:
+            continue
         if include_keys is not None and key not in include_keys:
             continue
         if exclude_keys is not None and key in exclude_keys:
@@ -401,6 +423,73 @@ def interleave(streams, weights, seed=0):
             yield next(live[i][0])
         except StopIteration:
             live.pop(i)
+
+
+class StreamDataset(torch.utils.data.IterableDataset):
+    """Wraps build_streams()+interleave()+prepare_item() as a real
+    IterableDataset so DataLoader(..., num_workers=N) can run N
+    independent WORKER PROCESSES pulling and preparing items in
+    parallel -- the actual bottleneck at low steps/s is I/O (HF network
+    reads, everyayah.com HTTP fetches, ffmpeg subprocess decode), none
+    of which touches the GPU, while the GPU-bound encode_batch()/
+    training step stays exactly where it was, in the main process.
+    BucketBatcher, encode_batch, and the training loop are UNCHANGED --
+    they only ever cared about receiving a stream of prepared item
+    dicts, whichever process produced them.
+
+    num_workers=0 (the default) means DataLoader runs __iter__ in the
+    MAIN process with no forking at all -- get_worker_info() returns
+    None, worker_id/num_workers fall back to (0, 1), and build_streams
+    behaves byte-for-byte as it did before this class existed. This
+    matters: it is the whole reason num_workers=0 is a safe default
+    that reproduces every already-validated single-process run.
+
+    Each worker gets its OWN INDEPENDENT copy of every underlying
+    stream, sharded (stream_hf's .shard(), stream_local's key-modulo
+    split) so workers cover DISJOINT data -- without this, N workers
+    would each redundantly re-stream and re-yield the SAME data,
+    multiplying it instead of parallelising the work of producing it.
+
+    rank/world_size: under DDP (torchrun, multiple PROCESSES each with
+    their own DataLoader workers), sharding must be by GLOBAL worker
+    identity (rank AND per-process worker id), not just the per-process
+    worker id alone -- otherwise rank 0's worker 0 and rank 1's worker 0
+    would be handed the IDENTICAL shard, each GPU training on the same
+    data the other one already sees, which defeats the entire point of
+    using more GPUs and would silently double-count that data in every
+    gradient average. Default world_size=1 reproduces plain (non-DDP)
+    sharding exactly.
+    """
+
+    def __init__(self, a, vocab, stage, val_keys, rank=0, world_size=1):
+        self.a = a
+        self.vocab = vocab
+        self.stage = stage
+        self.val_keys = val_keys
+        self.rank = rank
+        self.world_size = world_size
+
+    def __iter__(self):
+        info = torch.utils.data.get_worker_info()
+        local_wid = info.id if info else 0
+        local_nw = info.num_workers if info else 1
+        # GLOBAL shard identity: rank * (workers per rank) + this
+        # process's own worker id, out of world_size * workers-per-rank
+        # total shards.
+        wid = self.rank * local_nw + local_wid
+        nw = self.world_size * local_nw
+        streams, weights = build_streams(self.a, self.vocab, self.stage,
+                                         val_keys=self.val_keys,
+                                         worker_id=wid, num_workers=nw)
+        # seed + wid: without this, every worker's interleave() would
+        # make the IDENTICAL sequence of stream-selection choices (the
+        # underlying streams already differ via sharding, but the
+        # ROUND-ROBIN PATTERN across them would not).
+        src = interleave(streams, weights, seed=self.a.seed + wid)
+        for item in src:
+            prepared = prepare_item(item, self.vocab)
+            if prepared:
+                yield prepared
 
 
 # --------------------------------------------------------------------------
@@ -504,7 +593,21 @@ def ctc_loss(logits, lens, seq, slens):
 
 def boundary_loss(pred, target, mask, pos_weight):
     if mask.sum() == 0:
-        return torch.zeros((), device=pred.device)
+        # KEEP pred CONNECTED to the returned value (contributing
+        # exactly zero) rather than a fresh disconnected zero tensor.
+        # Harmless single-process (those params simply get no gradient
+        # contribution from THIS batch, and do from the next one that
+        # has boundary-labelled items) -- but under DDP, a parameter
+        # that receives a real gradient in SOME iterations and NONE AT
+        # ALL in others (a purely-streamed-HF batch with zero local
+        # items has mask.sum()==0) trips "Expected to have finished
+        # reduction in the prior iteration" / "Parameter indices which
+        # did not receive grad", since DDP fixes its reduction plan
+        # after the first iteration and expects the SAME participating
+        # parameters every time. Found by running under torchrun
+        # (nproc_per_node=1 still exercises DDP's bookkeeping) before
+        # trusting this on Kaggle's real multi-GPU environment.
+        return pred.sum() * 0.0
     l = F.binary_cross_entropy_with_logits(
         pred.float(), target, reduction="none",
         pos_weight=torch.tensor(pos_weight, device=pred.device))
@@ -606,28 +709,41 @@ def tristage_lr(step, total, peak, warm=0.10, hold=0.40, final_scale=0.05):
 # training
 # --------------------------------------------------------------------------
 
-def build_streams(a, vocab, stage, val_keys=None):
-    """-> (list of generators, list of weights)"""
+def build_streams(a, vocab, stage, val_keys=None, worker_id=0, num_workers=1):
+    """-> (list of generators, list of weights)
+
+    worker_id/num_workers thread straight through to stream_hf/
+    stream_local's own sharding -- see StreamDataset, the DataLoader
+    wrapper that calls this once per worker process with that worker's
+    (worker_id, num_workers), so each process's streams cover a
+    disjoint slice of every underlying source rather than every worker
+    redundantly re-streaming the same data.
+    """
     streams, weights = [], []
 
     if stage == 1:
         streams.append(stream_hf("IqraEval/Iqra_train", "train",
-                                 max_hours=a.hours, seed=a.seed))
+                                 max_hours=a.hours, seed=a.seed,
+                                 worker_id=worker_id, num_workers=num_workers))
         weights.append(a.w_train)
         if a.tts:
             streams.append(stream_hf("IqraEval/Iqra_TTS", "train",
-                                     max_hours=a.hours, seed=a.seed + 1))
+                                     max_hours=a.hours, seed=a.seed + 1,
+                                     worker_id=worker_id,
+                                     num_workers=num_workers))
             weights.append(a.w_tts)
     else:
         streams.append(stream_hf(a.stage2_dataset, a.stage2_split,
-                                 max_hours=None, seed=a.seed))
+                                 max_hours=None, seed=a.seed,
+                                 worker_id=worker_id, num_workers=num_workers))
         weights.append(1.0)
         if a.stage2_replay > 0:
             # a little stage-1 data mixed back in, to limit catastrophic
             # forgetting during a fine-tune on ~2 hours
             streams.append(stream_hf("IqraEval/Iqra_train", "train",
                                      max_hours=a.stage2_replay_hours,
-                                     seed=a.seed + 2))
+                                     seed=a.seed + 2, worker_id=worker_id,
+                                     num_workers=num_workers))
             weights.append(a.stage2_replay)
 
     if a.local_ratio > 0 and Path(a.manifest).exists():
@@ -639,7 +755,8 @@ def build_streams(a, vocab, stage, val_keys=None):
         streams.append(cycle(
             lambda: stream_local(a.manifest, a.lib, a.text, a.audio_cache,
                                  everyayah_cache=a.everyayah_cache,
-                                 exclude_keys=val_keys)))
+                                 exclude_keys=val_keys, worker_id=worker_id,
+                                 num_workers=num_workers)))
         weights.append(a.local_ratio)
 
     return streams, weights
@@ -669,15 +786,25 @@ def prepare_item(item, vocab):
     return item
 
 
+def _append_jsonl(path, record):
+    """Append one JSON record per line -- the only persistent training
+    log this trainer writes; everything else is stdout, which Kaggle
+    only keeps if you explicitly save the notebook. `a` mode so a
+    --resume run continues the SAME log file rather than truncating
+    the history of a run that may already be many hours in."""
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+
 def save_ckpt(path, model, opt, scaler, step, vocab, cfg, extra=None):
     torch.save({"model": model.state_dict(), "opt": opt.state_dict(),
                 "scaler": scaler.state_dict(), "step": step,
                 "vocab": vocab, "config": cfg, **(extra or {})}, path)
 
 
-def _checkpoint(a, stage, out_dir, resume_path, model, opt, scaler, step,
-                vocab, cfg, verify_head, enc, val_prepared, device,
-                best_val, final=False):
+def _checkpoint(a, stage, out_dir, resume_path, raw_model, opt, scaler,
+                step, vocab, cfg, raw_verify_head, enc, val_prepared,
+                device, best_val, is_main=True, final=False):
     """Compute val loss (if there's a held-out slice to compute it on),
     always overwrite resume.pt/stage{stage}_last.pt, and additionally
     write stage{stage}_best.pt whenever val loss improves -- this is
@@ -685,8 +812,23 @@ def _checkpoint(a, stage, out_dir, resume_path, model, opt, scaler, step,
     -> best_val (unchanged if no val slice or no improvement this call,
     so the caller always has the correct running value to pass back in
     next time, across resumes too).
+
+    Takes raw_model/raw_verify_head (the UNDERLYING, unwrapped modules)
+    specifically -- validation is a plain forward pass needing no DDP
+    gradient-sync hooks, and every state_dict written here must stay in
+    the SAME format whether or not this run used DDP, or score.py/
+    decode.py/phase1.py would need DDP-aware loading code too.
+
+    is_main gates the WHOLE body: raw_model's forward pass here has no
+    DDP hooks attached (validation needs no gradient sync), so unlike
+    the training loop there is no collective-call lockstep requirement
+    -- non-main ranks can just skip this entirely rather than
+    redundantly repeating the same forward pass N times for a result
+    only rank 0 ever uses (only rank 0 saves checkpoints or prints).
     """
-    val = compute_val_loss(model, enc, val_prepared, a.layers, device,
+    if not is_main:
+        return best_val
+    val = compute_val_loss(raw_model, enc, val_prepared, a.layers, device,
                            a.max_frames, a.lam_bnd, a.pos_weight,
                            a.no_boundary)
     improved = val is not None and val < best_val
@@ -694,14 +836,15 @@ def _checkpoint(a, stage, out_dir, resume_path, model, opt, scaler, step,
         best_val = val
 
     vh_state = {"best_val": best_val}
-    if verify_head is not None:
-        vh_state["verify_head"] = verify_head.state_dict()
-    save_ckpt(resume_path, model, opt, scaler, step, vocab, cfg, vh_state)
-    save_ckpt(out_dir / f"stage{stage}_last.pt", model, opt, scaler, step,
-              vocab, cfg, vh_state)
+    if raw_verify_head is not None:
+        vh_state["verify_head"] = raw_verify_head.state_dict()
+    save_ckpt(resume_path, raw_model, opt, scaler, step, vocab, cfg,
+              vh_state)
+    save_ckpt(out_dir / f"stage{stage}_last.pt", raw_model, opt, scaler,
+              step, vocab, cfg, vh_state)
     if improved:
-        save_ckpt(out_dir / f"stage{stage}_best.pt", model, opt, scaler,
-                  step, vocab, cfg, {**vh_state, "val": val})
+        save_ckpt(out_dir / f"stage{stage}_best.pt", raw_model, opt,
+                  scaler, step, vocab, cfg, {**vh_state, "val": val})
 
     if not final:
         val_str = (f"  val {val:.4f} (best {best_val:.4f})"
@@ -710,21 +853,59 @@ def _checkpoint(a, stage, out_dir, resume_path, model, opt, scaler, step,
     return best_val
 
 
+def ddp_setup():
+    """-> (rank, world_size, local_rank, is_ddp).
+
+    Detects torchrun's own environment variables (RANK/WORLD_SIZE/
+    LOCAL_RANK) rather than adding a new flag -- plain
+    `python -m suwayhib.train.train_stream ...` (no torchrun) sees
+    none of these, returns (0, 1, 0, False), and is BYTE-FOR-BYTE the
+    single-process path every run in this project has been validated
+    against so far. `torchrun --nproc_per_node=2 -m suwayhib.train.
+    train_stream ...` is what turns DDP on, one process per GPU,
+    torchrun itself setting these variables before this module even
+    starts running.
+    """
+    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
+        local_rank = int(os.environ.get("LOCAL_RANK", rank))
+        torch.cuda.set_device(local_rank)
+        dist.init_process_group(backend="nccl",
+                                device_id=torch.device(f"cuda:{local_rank}"))
+        return rank, world_size, local_rank, True
+    return 0, 1, 0, False
+
+
 def run_training(a, stage):
-    device = torch.device(a.device)
+    rank, world_size, local_rank, is_ddp = ddp_setup()
+    is_main = rank == 0
+    device = (torch.device(f"cuda:{local_rank}") if is_ddp
+             else torch.device(a.device))
 
     extra = ()
-    if a.scan_symbols:
+    if a.scan_symbols and is_main:
         print("scanning label symbols in the stream...")
         seen = scan_symbols("IqraEval/Iqra_train", "train", n=a.scan_n)
         extra = tuple(seen)
         print(f"  {len(seen)} distinct symbols observed")
+    # Every rank must agree on the SAME vocab (it determines n_phones,
+    # baked into the model's output layer shape) -- scan_symbols only
+    # running on rank 0 above would otherwise give ranks different
+    # vocabularies whenever it finds anything, silently corrupting DDP's
+    # gradient averaging (each rank's output layer would mean something
+    # different). Simplest fix: only rank 0 pays the network cost of
+    # scanning, then EVERY rank rebuilds from the synchronised result.
+    if is_ddp:
+        obj = [extra]
+        dist.broadcast_object_list(obj, src=0)
+        extra = obj[0]
     vocab = build_vocab(extra)
     n_phones = len(vocab)
 
-    enc = E.Encoder(device=a.device, fp16=(device.type == "cuda"),
+    enc = E.Encoder(device=device, fp16=(device.type == "cuda"),
                     max_layer=max(a.layers))
-    model = M.PhoneHead(
+    raw_model = M.PhoneHead(
         n_phones=n_phones, n_layers=len(a.layers), dim=a.dim,
         blocks=a.blocks, heads=a.heads, kernel=a.kernel,
         ff_mult=a.ff_mult, dropout=a.dropout, fusion=a.fusion).to(device)
@@ -734,7 +915,26 @@ def run_training(a, stage):
            "n_layers": len(a.layers), "layers": a.layers,
            "n_phones": n_phones}
 
-    verify_head = PH2.VerificationHead().to(device) if a.verify_loss else None
+    raw_verify_head = (PH2.VerificationHead().to(device)
+                       if a.verify_loss else None)
+
+    # DDP WRAPPING. raw_model/raw_verify_head (the UNDERLYING, unwrapped
+    # modules) are what every state_dict save/load below uses, so a
+    # checkpoint trained under DDP is IDENTICAL in format to one trained
+    # single-process -- score.py/decode.py/phase1.py's plain
+    # PhoneHead(...).load_state_dict(ck["model"]) needs no DDP-aware
+    # branch, ever. `model`/`verify_head` (the possibly-wrapped objects)
+    # are used ONLY for the forward/backward pass in the training loop,
+    # where DDP's gradient-averaging hooks need to be in the call path.
+    model = raw_model
+    verify_head = raw_verify_head
+    if is_ddp:
+        model = torch.nn.parallel.DistributedDataParallel(
+            raw_model, device_ids=[local_rank])
+        if raw_verify_head is not None:
+            verify_head = torch.nn.parallel.DistributedDataParallel(
+                raw_verify_head, device_ids=[local_rank])
+
     params = list(model.parameters())
     if verify_head is not None:
         params += list(verify_head.parameters())
@@ -743,18 +943,26 @@ def run_training(a, stage):
     scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
     out_dir = Path(a.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if is_main:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    if is_ddp:
+        dist.barrier()          # every rank waits for rank 0's mkdir
     resume_path = out_dir / "resume.pt"
+    log_path = out_dir / "train_log.jsonl"
 
     if a.init:
+        # Every rank loads the SAME file independently (single-node
+        # multi-GPU: one shared filesystem, no broadcast needed) --
+        # map_location=device puts each rank's copy on ITS OWN GPU.
         ck = torch.load(a.init, map_location=device, weights_only=False)
-        model.load_state_dict(ck["model"])
-        print(f"initialised from {a.init} (step {ck.get('step', '?')})")
+        raw_model.load_state_dict(ck["model"])
+        if is_main:
+            print(f"initialised from {a.init} (step {ck.get('step', '?')})")
     best_val = float("inf")
     if a.resume and resume_path.exists():
         ck = torch.load(resume_path, map_location=device,
                         weights_only=False)
-        model.load_state_dict(ck["model"])
+        raw_model.load_state_dict(ck["model"])
         opt.load_state_dict(ck["opt"])
         scaler.load_state_dict(ck["scaler"])
         start_step = ck["step"]
@@ -764,26 +972,34 @@ def run_training(a, stage):
         # and overwrite a genuinely better stage{stage}_best.pt from
         # before the interruption.
         best_val = ck.get("best_val", float("inf"))
-        if verify_head is not None and ck.get("verify_head"):
-            verify_head.load_state_dict(ck["verify_head"])
-        print(f"resumed from {resume_path} at step {start_step} "
-              f"(best_val so far: {best_val:.4f})")
+        if raw_verify_head is not None and ck.get("verify_head"):
+            raw_verify_head.load_state_dict(ck["verify_head"])
+        if is_main:
+            print(f"resumed from {resume_path} at step {start_step} "
+                  f"(best_val so far: {best_val:.4f})")
 
-    print(f"\nstage      : {stage}")
-    print(f"vocab      : {n_phones} phones + blank")
-    print(f"layers     : {a.layers}")
-    print(f"parameters : {model.n_params()/1e6:.2f} M")
-    print(f"labels     : {a.label_col}  "
-          f"(phoneme_mis = what was ACTUALLY said; using phoneme_ref "
-          f"here would make Iqra_TTS actively harmful)")
-    print(f"boundary   : lambda {a.lam_bnd}, supervised only by local "
-          f"items (local_ratio {a.local_ratio})")
-    if verify_head is not None:
-        print(f"verify     : ON, lambda {a.lam_verify} -- train/phase2.py's "
-              f"decoding-aware loss, gradient flows into the phone head "
-              f"itself (not a post-hoc classifier, see phase1.py for that)")
-    else:
-        print(f"verify     : off (--verify-loss to enable)")
+    if is_main:
+        print(f"\nstage      : {stage}")
+        print(f"vocab      : {n_phones} phones + blank")
+        print(f"layers     : {a.layers}")
+        print(f"parameters : {raw_model.n_params()/1e6:.2f} M")
+        print(f"labels     : {a.label_col}  "
+              f"(phoneme_mis = what was ACTUALLY said; using phoneme_ref "
+              f"here would make Iqra_TTS actively harmful)")
+        print(f"boundary   : lambda {a.lam_bnd}, supervised only by local "
+              f"items (local_ratio {a.local_ratio})")
+        if raw_verify_head is not None:
+            print(f"verify     : ON, lambda {a.lam_verify} -- "
+                  f"train/phase2.py's decoding-aware loss, gradient "
+                  f"flows into the phone head itself (not a post-hoc "
+                  f"classifier, see phase1.py for that)")
+        else:
+            print(f"verify     : off (--verify-loss to enable)")
+        if is_ddp:
+            print(f"ddp        : ON, {world_size} ranks -- batch "
+                  f"{a.batch}/GPU x {world_size} = "
+                  f"{a.batch * world_size} effective")
+
     # VALIDATION SPLIT. The last a.val_items local-library keys (sorted,
     # deterministic) are held out of TRAINING entirely (exclude_keys
     # below) and materialised ONCE here as a fixed set never re-drawn
@@ -800,12 +1016,26 @@ def run_training(a, stage):
                                include_keys=val_keys)
         val_prepared = [x for x in (prepare_item(i, vocab) for i in val_raw)
                         if x]
-        print(f"validation : {len(val_prepared)} held-out local items "
-              f"(never trained on)\n")
+        if is_main:
+            print(f"validation : {len(val_prepared)} held-out local items "
+                  f"(never trained on)\n")
 
-    streams, weights = build_streams(a, vocab, stage, val_keys=val_keys)
-    src = interleave(streams, weights, seed=a.seed)
-    src = (x for x in (prepare_item(i, vocab) for i in src) if x)
+    dataset = StreamDataset(a, vocab, stage, val_keys, rank=rank,
+                            world_size=world_size)
+    if a.num_workers > 0:
+        src = torch.utils.data.DataLoader(
+            dataset, batch_size=None, num_workers=a.num_workers,
+            persistent_workers=True, prefetch_factor=a.prefetch_factor)
+        if is_main:
+            print(f"data       : {a.num_workers} DataLoader workers"
+                  f"{f' x {world_size} ranks' if is_ddp else ''}, "
+                  f"prefetch_factor={a.prefetch_factor}\n")
+    else:
+        # num_workers=0: iterate StreamDataset directly in THIS process,
+        # no DataLoader/multiprocessing involved at all -- the exact
+        # single-process behaviour every earlier run in this project was
+        # validated against.
+        src = dataset
     batcher = BucketBatcher(src, a.batch, a.pool_batches, seed=a.seed)
 
     model.train()
@@ -817,8 +1047,22 @@ def run_training(a, stage):
     for batch in batcher:
         if step >= a.total_steps:
             break
-        if deadline and time.time() > deadline:
-            print(f"\nwall-clock budget reached at step {step}")
+        # DDP-SAFE DEADLINE CHECK. Ranks' local clocks/timing can drift
+        # by at least a little over a multi-hour run; without agreeing
+        # on the stop decision, ONE rank breaking out here while
+        # another proceeds to this step's backward() (a COLLECTIVE
+        # call) leaves that other rank waiting forever for a partner
+        # that already exited -- a silent hang partway through an
+        # unattended multi-day run, exactly the failure mode worth
+        # spending a cheap all_reduce to rule out.
+        stop = bool(deadline and time.time() > deadline)
+        if is_ddp:
+            stop_t = torch.tensor([1 if stop else 0], device=device)
+            dist.all_reduce(stop_t, op=dist.ReduceOp.MAX)
+            stop = bool(stop_t.item())
+        if stop:
+            if is_main:
+                print(f"\nwall-clock budget reached at step {step}")
             break
 
         lr = tristage_lr(step, a.total_steps, a.lr)
@@ -843,7 +1087,18 @@ def run_training(a, stage):
                 lb = boundary_loss(out["boundary"], b["bnd"].to(device),
                                    bnd_mask.to(device), a.pos_weight)
             lv = torch.zeros((), device=device)
-            if verify_head is not None and b["verify_present"]:
+            if verify_head is not None and not b["verify_present"]:
+                # Same DDP bookkeeping issue as boundary_loss's
+                # mask.sum()==0 case: verify_head's own parameters
+                # (VerificationHead's scale/bias) must participate in
+                # EVERY iteration once verify_head exists and is
+                # DDP-wrapped, even a batch where no item happens to
+                # carry a verify target -- a plain disconnected zero
+                # would starve them of any gradient (not even zero)
+                # on such iterations, which DDP's fixed reduction plan
+                # does not tolerate.
+                lv = sum(p.sum() for p in verify_head.parameters()) * 0.0
+            elif verify_head is not None and b["verify_present"]:
                 # Restrict to the batch rows that actually carry a
                 # verify target -- everything else (an item whose
                 # verify_phones had an OOV symbol, or no phoneme_ref at
@@ -865,8 +1120,17 @@ def run_training(a, stage):
             loss = lc + a.lam_bnd * lb + a.lam_verify * lv
 
         if not torch.isfinite(loss):
-            step += 1
-            continue
+            # Under DDP, backward() is a COLLECTIVE call (an all-reduce
+            # across every rank) -- skipping it on just this rank while
+            # other ranks proceed normally would leave those other
+            # ranks blocked forever waiting for a partner that never
+            # shows up. Substituting a loss that stays connected to the
+            # graph but is multiplied by exactly zero keeps every
+            # rank's control flow identical (backward() always called)
+            # while making this step a true no-op (exactly zero
+            # gradient) instead of a collective-call mismatch. Harmless
+            # in the non-DDP case too -- just a zero-gradient step.
+            loss = out["logits"].sum() * 0.0
 
         opt.zero_grad(set_to_none=True)
         scaler.scale(loss).backward()
@@ -876,8 +1140,18 @@ def run_training(a, stage):
         # freshly-initialised head is prone to collapsing to all-blank
         # early; letting the classifier settle first is standard, cheap
         # insurance against losing the first hour of a long run.
+        #
+        # raw_model.named_parameters() DELIBERATELY, not model's: under
+        # DDP, model (the wrapped object) prefixes every name with
+        # "module." (e.g. "module.out.weight"), so `n_.startswith("out.")`
+        # would silently match NOTHING and zero every parameter's
+        # gradient including the output layer's -- found by tracing
+        # through DDP's own naming convention, not by seeing it fail.
+        # raw_model and model share the SAME underlying parameter
+        # tensors either way, so zeroing via raw_model's names still
+        # correctly zeroes the gradients DDP will reduce.
         if step < a.warmup_head:
-            for n_, p_ in model.named_parameters():
+            for n_, p_ in raw_model.named_parameters():
                 if not n_.startswith("out."):
                     if p_.grad is not None:
                         p_.grad.zero_()
@@ -894,38 +1168,60 @@ def run_training(a, stage):
         nb += 1
         step += 1
 
-        if step % a.log_every == 0:
+        if step % a.log_every == 0 and is_main:
+            # Logged/printed values are rank 0's OWN local losses, not
+            # averaged across ranks -- standard DDP practice (only
+            # gradients are synced; per-rank loss values are a fine,
+            # cheap proxy for "how is training going" without adding
+            # another collective call just for logging).
             el = time.time() - t0
+            steps_per_s = (step - start_step) / max(el, 1)
             print(f"step {step:7d}/{a.total_steps}  "
                   f"ctc {run_ctc/max(nb,1):7.4f}  "
                   f"bnd {run_bnd/max(nb,1):7.4f}  "
                   f"verify {run_verify/max(nb,1):7.4f}  lr {lr:.2e}  "
-                  f"{el/60:6.1f}m  {(step-start_step)/max(el,1):.2f} steps/s",
+                  f"{el/60:6.1f}m  {steps_per_s:.2f} steps/s",
                   flush=True)
+            _append_jsonl(log_path, {
+                "type": "train", "step": step, "total_steps": a.total_steps,
+                "ctc": run_ctc / max(nb, 1), "bnd": run_bnd / max(nb, 1),
+                "verify": run_verify / max(nb, 1), "lr": lr,
+                "elapsed_min": el / 60, "steps_per_s": steps_per_s,
+            })
+        if step % a.log_every == 0:
             run_ctc, run_bnd, run_verify, nb = 0.0, 0.0, 0.0, 0
 
         if step % a.ckpt_every == 0:
-            best_val = _checkpoint(a, stage, out_dir, resume_path, model,
-                                   opt, scaler, step, vocab, cfg,
-                                   verify_head, enc, val_prepared, device,
-                                   best_val)
+            best_val = _checkpoint(a, stage, out_dir, resume_path,
+                                   raw_model, opt, scaler, step, vocab,
+                                   cfg, raw_verify_head, enc, val_prepared,
+                                   device, best_val, is_main=is_main)
+            if is_ddp:
+                dist.barrier()   # rank 0 finishes writing before anyone
+                                 # moves on to the next step's all-reduce
             gc.collect()
             if device.type == "cuda":
                 torch.cuda.empty_cache()
 
-    best_val = _checkpoint(a, stage, out_dir, resume_path, model, opt,
-                           scaler, step, vocab, cfg, verify_head, enc,
-                           val_prepared, device, best_val, final=True)
-    print(f"\nstopped at step {step} -> {out_dir}/stage{stage}_last.pt"
-          f"{f' (best: {out_dir}/stage{stage}_best.pt, val {best_val:.4f})' if val_prepared else ''}")
-    print("NOTE: val loss above is CTC+boundary on a small (--val-items)")
-    print("held-out slice of the LOCAL reference library only -- streamed")
-    print("HF sources have no fixed slice to hold out. Useful for picking")
-    print("a checkpoint across a long run, but the honest, full evaluation")
-    print("for this project still lives elsewhere:")
-    print("  python -m suwayhib.pipeline.score testset --ckpt <ckpt> --by-error-type")
-    print("  python -m suwayhib.pipeline.decode sweep --ckpt <ckpt> --source testset "
-          "--split holdout")
+    best_val = _checkpoint(a, stage, out_dir, resume_path, raw_model, opt,
+                           scaler, step, vocab, cfg, raw_verify_head, enc,
+                           val_prepared, device, best_val, is_main=is_main,
+                           final=True)
+    if is_ddp:
+        dist.barrier()
+    if is_main:
+        print(f"\nstopped at step {step} -> {out_dir}/stage{stage}_last.pt"
+              f"{f' (best: {out_dir}/stage{stage}_best.pt, val {best_val:.4f})' if val_prepared else ''}")
+        print("NOTE: val loss above is CTC+boundary on a small (--val-items)")
+        print("held-out slice of the LOCAL reference library only -- streamed")
+        print("HF sources have no fixed slice to hold out. Useful for picking")
+        print("a checkpoint across a long run, but the honest, full evaluation")
+        print("for this project still lives elsewhere:")
+        print("  python -m suwayhib.pipeline.score testset --ckpt <ckpt> --by-error-type")
+        print("  python -m suwayhib.pipeline.decode sweep --ckpt <ckpt> --source testset "
+              "--split holdout")
+    if is_ddp:
+        dist.destroy_process_group()
     return 0
 
 
@@ -946,6 +1242,17 @@ def add_common(p):
 
     p.add_argument("--batch", type=int, default=8)
     p.add_argument("--pool-batches", type=int, default=24)
+    p.add_argument("--num-workers", type=int, default=0,
+                   help="DataLoader worker PROCESSES for StreamDataset "
+                        "(HF network reads, everyayah.com fetches, "
+                        "ffmpeg decode -- all I/O, not GPU work). 0 "
+                        "(default) runs single-process, identical to "
+                        "every run this project validated before this "
+                        "flag existed. 3-4 is a reasonable starting "
+                        "point on a multi-core Kaggle instance.")
+    p.add_argument("--prefetch-factor", type=int, default=4,
+                   help="batches queued per DataLoader worker ahead of "
+                        "need. Only meaningful with --num-workers > 0.")
     p.add_argument("--max-frames", type=int, default=1200)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--weight-decay", type=float, default=0.01)
@@ -984,7 +1291,20 @@ def add_common(p):
 
     p.add_argument("--label-col", default="phoneme_mis")
     p.add_argument("--hours", type=float, default=None,
-                   help="cap per streamed dataset; None = all of it")
+                   help="cap per streamed dataset; None = all of it. "
+                        "Under --num-workers>0 or torchrun DDP, keep "
+                        "this generous relative to --total-steps: each "
+                        "worker/rank gets a SHARD of this budget "
+                        "(divided by however many shards exist), and a "
+                        "shard exhausting early makes that process's "
+                        "for-loop end while others are still mid-run --"
+                        " under DDP specifically, that desyncs the "
+                        "collective backward() call and HANGS the "
+                        "other ranks rather than erroring loudly. Fine "
+                        "for a real run against the full corpus; when "
+                        "smoke-testing with a small --hours, size "
+                        "--total-steps so the run finishes well before "
+                        "any shard could plausibly run dry.")
     p.add_argument("--tts", action="store_true", default=True,
                    help="include Iqra_TTS (~80h of deliberate errors). "
                         "Only safe BECAUSE we train on phoneme_mis.")
