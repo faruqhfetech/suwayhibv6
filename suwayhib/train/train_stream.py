@@ -569,7 +569,8 @@ def run_training(a, stage):
     vocab = build_vocab(extra)
     n_phones = len(vocab)
 
-    enc = E.Encoder(device=a.device, fp16=(device.type == "cuda"))
+    enc = E.Encoder(device=a.device, fp16=(device.type == "cuda"),
+                    max_layer=max(a.layers))
     model = M.PhoneHead(
         n_phones=n_phones, n_layers=len(a.layers), dim=a.dim,
         blocks=a.blocks, heads=a.heads, kernel=a.kernel,

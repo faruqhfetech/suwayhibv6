@@ -229,8 +229,26 @@ def verification_loss(head, log_probs, target, input_lengths,
 
 
 # --------------------------------------------------------------------------
-# self-test -- synthetic tensors only, no dataset/GPU/model required
+# self-test -- synthetic tensors only, no dataset or trained model
+# required. GPU IS effectively required, though: see DEVICE below.
 # --------------------------------------------------------------------------
+
+# CUDA when available, CPU otherwise -- NOT a style preference. Found by
+# actually running this repeatedly: PyTorch's CPU F.ctc_loss backward
+# segfaults ("corrupted size vs. prev_size while consolidating"),
+# non-deterministically (roughly 3 crashes in 5 runs), on a MIXED batch
+# (one short target, one long-but-still-alignable target) on this
+# project's torch build (2.11.0+cu130) -- reproduced 5/5 stable on CUDA
+# and 3/3+ crashing on CPU, same tensors, same seed, only device
+# changed. This is not the impossible-alignment issue verification_score
+# already guards against (that target here IS alignable: 10 distinct
+# phones fit in 12 frames with no repeats needing separators) -- it
+# looks like a lower-level instability in this build's CPU CTC kernel
+# under certain batch shapes. train_stream.py always runs on CUDA in
+# real use, so production is unaffected either way; this default just
+# keeps the SELF-TEST from hitting the same unstable path.
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def _toy_logits(seq_len, n_classes, target, correct, seed):
     """A tiny hand-built (T, C) logit sequence: strongly peaked on
@@ -253,7 +271,7 @@ def _toy_logits(seq_len, n_classes, target, correct, seed):
     for i, p in enumerate(seq):
         t = min((i + 1) * step, seq_len - 1)
         logits[t, p] += 8.0
-    return logits
+    return logits.to(DEVICE)
 
 
 def sc_higher_score_for_correct_target():
@@ -265,9 +283,9 @@ def sc_higher_score_for_correct_target():
     wrong = _toy_logits(T, C, target, correct=False, seed=1)
     lp = F.log_softmax(torch.stack([correct, wrong]), dim=-1)
     lp = lp.transpose(0, 1)                              # (T, B, C)
-    tgt = torch.tensor(target + target, dtype=torch.long)
-    ilen = torch.tensor([T, T])
-    tlen = torch.tensor([len(target), len(target)])
+    tgt = torch.tensor(target + target, dtype=torch.long, device=DEVICE)
+    ilen = torch.tensor([T, T], device=DEVICE)
+    tlen = torch.tensor([len(target), len(target)], device=DEVICE)
     score = verification_score(lp, tgt, ilen, tlen)
     ok = bool(score[0] > score[1])
     return ok, f"correct {score[0]:.3f} vs wrong {score[1]:.3f} (want correct higher)"
@@ -284,13 +302,13 @@ def sc_loss_decreases_with_training():
     wrong = _toy_logits(T, C, target, correct=False, seed=3)
     raw = torch.stack([correct, wrong]).clone().requires_grad_(True)
 
-    head = VerificationHead()
+    head = VerificationHead().to(DEVICE)
     opt = torch.optim.SGD([raw, *head.parameters()], lr=0.05)
 
-    tgt = torch.tensor(target + target, dtype=torch.long)
-    ilen = torch.tensor([T, T])
-    tlen = torch.tensor([len(target), len(target)])
-    label = torch.tensor([1.0, 0.0])
+    tgt = torch.tensor(target + target, dtype=torch.long, device=DEVICE)
+    ilen = torch.tensor([T, T], device=DEVICE)
+    tlen = torch.tensor([len(target), len(target)], device=DEVICE)
+    label = torch.tensor([1.0, 0.0], device=DEVICE)
 
     losses = []
     for _ in range(30):
@@ -315,11 +333,11 @@ def sc_impossible_target_scores_bad_not_good():
     negative), not accidentally the best score in the batch."""
     target = list(range(1, 15))                # 14 phones
     T, C = 10, 16                               # only 10 frames -- too few
-    logits = torch.randn(T, C) * 0.1
+    logits = torch.randn(T, C, device=DEVICE) * 0.1
     lp = F.log_softmax(logits, dim=-1).unsqueeze(1)   # (T, 1, C)
-    tgt = torch.tensor(target, dtype=torch.long)
-    ilen = torch.tensor([T])
-    tlen = torch.tensor([len(target)])
+    tgt = torch.tensor(target, dtype=torch.long, device=DEVICE)
+    ilen = torch.tensor([T], device=DEVICE)
+    tlen = torch.tensor([len(target)], device=DEVICE)
     score = verification_score(lp, tgt, ilen, tlen)
     finite = bool(torch.isfinite(score).all())
     bad = bool(score.item() < -10.0)
@@ -339,11 +357,13 @@ def sc_impossible_item_does_not_poison_batch_gradient():
     T, C = 12, 8
     possible_target = [1, 2, 3]                  # fits easily in 12 frames
     impossible_target = list(range(1, 11))        # 10 phones, only 12 frames
-    logits = (torch.randn(T, 2, C) * 0.1).requires_grad_(True)
+    logits = (torch.randn(T, 2, C, device=DEVICE) * 0.1).requires_grad_(True)
     lp = F.log_softmax(logits, dim=-1)
-    tgt = torch.tensor(possible_target + impossible_target, dtype=torch.long)
-    ilen = torch.tensor([T, T])
-    tlen = torch.tensor([len(possible_target), len(impossible_target)])
+    tgt = torch.tensor(possible_target + impossible_target, dtype=torch.long,
+                       device=DEVICE)
+    ilen = torch.tensor([T, T], device=DEVICE)
+    tlen = torch.tensor([len(possible_target), len(impossible_target)],
+                        device=DEVICE)
 
     score = verification_score(lp, tgt, ilen, tlen)
     score.sum().backward()
@@ -365,7 +385,16 @@ SCENARIOS = [
 
 
 def cmd_selftest(a):
-    print("Pure PyTorch. No dataset, no model, no GPU needed.\n")
+    print(f"Pure PyTorch. No dataset or trained model needed. "
+          f"device={DEVICE}")
+    if DEVICE.type == "cpu":
+        print("WARNING: no CUDA available -- running on CPU, where this "
+              "project's torch build has a known intermittent CTC "
+              "backward crash on some batch shapes (see DEVICE's "
+              "comment above). A clean run here is not a stronger "
+              "guarantee than a CUDA run; a crash here is not "
+              "necessarily a real bug.")
+    print()
     n = 0
     for name, fn in SCENARIOS:
         ok, detail = fn()

@@ -84,9 +84,26 @@ FRAMES_PER_SEC = 1000 // FRAME_MS
 # --------------------------------------------------------------------------
 
 class Encoder:
-    """Frozen XLS-R, returning selected hidden layers."""
+    """Frozen XLS-R, returning selected hidden layers.
 
-    def __init__(self, model=MODEL, device="cuda", fp16=True):
+    Pass `max_layer` (the highest transformer layer index anything
+    downstream will ever read) to truncate the model at construction
+    time. Transformer layers are SEQUENTIAL -- producing hidden state k
+    still requires computing every layer below it, so this cannot make
+    layers 0..max_layer any cheaper -- but layers ABOVE max_layer are
+    pure waste: __call__'s output_hidden_states=True otherwise computes
+    all 24 layers regardless of which ones a caller later selects out
+    of the result. Every caller passes max_layer=max(layers) for
+    WHATEVER layers it actually reads -- score.py/train_stream.py/
+    extract.py's `full` mode (default 14-19) drop layers 20-23;
+    extract.py's `probe` mode (default a much wider 10-22, to compare a
+    whole band) still drops only the ONE truly-unused top layer (23)
+    rather than needing a special case, since max_layer is always
+    derived from the actual request, never hard-coded.
+    """
+
+    def __init__(self, model=MODEL, device="cuda", fp16=True,
+                max_layer=None):
         import torch
         from transformers import Wav2Vec2Model
         self.torch = torch
@@ -94,10 +111,44 @@ class Encoder:
         self.fp16 = fp16 and self.device.type == "cuda"
         self.model = Wav2Vec2Model.from_pretrained(
             model, torch_dtype=torch.float16 if self.fp16 else torch.float32)
+        total = self.model.config.num_hidden_layers
+        if max_layer is not None:
+            if not (0 < max_layer <= total):
+                raise ValueError(f"max_layer {max_layer} out of range for "
+                                 f"a {total}-layer encoder")
+            # KEEP ONE EXTRA LAYER, do not slice to exactly max_layer.
+            # XLS-R uses "stable layer norm": the encoder applies a
+            # final LayerNorm to whichever hidden state is LAST in the
+            # stack, and that normalised value is what output_hidden_
+            # states reports as the final entry -- found by actually
+            # comparing truncated vs. full output (max abs diff 136,
+            # not the ~0 a pure no-op truncation should give). In the
+            # FULL 24-layer model, hs[max_layer] (e.g. hs[19]) is an
+            # ordinary, un-normalised intermediate value, because layer
+            # 24's output -- not layer max_layer's -- is the one that
+            # gets normalised. Slicing to exactly max_layer layers makes
+            # layer max_layer-1 the new LAST layer, so hs[max_layer]
+            # would silently become the NORMALISED value instead,
+            # matching neither the full model's semantics nor what
+            # every downstream consumer of a `layers` list assumes.
+            # Keeping max_layer + 1 layers means the extra layer (never
+            # read) absorbs that special treatment instead.
+            keep = min(max_layer + 1, total)
+            if keep < total:
+                self.model.encoder.layers = self.model.encoder.layers[:keep]
+                print(f"  encoder truncated: layers {keep}-{total - 1} "
+                      f"dropped (never read downstream), {keep}/{total} "
+                      f"kept")
         self.model.eval().to(self.device)
         for p in self.model.parameters():
             p.requires_grad_(False)
-        self.n_layers = self.model.config.num_hidden_layers
+        # total_layers is the TRUE pretrained depth (24 for XLS-R-300M),
+        # kept even after truncation so callers can still validate a
+        # requested layer index against what the checkpoint actually
+        # has, not against whatever this particular instance was
+        # truncated down to.
+        self.total_layers = total
+        self.n_layers = len(self.model.encoder.layers)
         self.dim = self.model.config.hidden_size
         n = sum(p.numel() for p in self.model.parameters())
         print(f"encoder: {model} ({n/1e6:.0f}M params, {self.n_layers} "
@@ -385,10 +436,10 @@ class FeatureCache:
 # --------------------------------------------------------------------------
 
 def run(items, layers, out, device, est_hours, max_batch_seconds, fp16):
-    enc = Encoder(device=device, fp16=fp16)
-    bad = [k for k in layers if not (1 <= k <= enc.n_layers)]
+    enc = Encoder(device=device, fp16=fp16, max_layer=max(layers))
+    bad = [k for k in layers if not (1 <= k <= enc.total_layers)]
     if bad:
-        raise SystemExit(f"layers {bad} outside 1..{enc.n_layers}")
+        raise SystemExit(f"layers {bad} outside 1..{enc.total_layers}")
 
     est_frames = int(est_hours * 3600 * FRAMES_PER_SEC)
     w = FeatureWriter(out, layers, enc.dim, est_frames)

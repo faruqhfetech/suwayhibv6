@@ -98,8 +98,9 @@ class LiveScorer:
         self.device = torch.device(device)
         self.model, self.vocab, self.inv, self.cfg = load_checkpoint(
             ckpt_path, self.device)
-        self.enc = E.Encoder(device=device, fp16=(self.device.type == "cuda"))
         self.layers = self.cfg["layers"]
+        self.enc = E.Encoder(device=device, fp16=(self.device.type == "cuda"),
+                             max_layer=max(self.layers))
 
     def phones(self, audio):
         """Raw float32 audio -> decoded phone symbol list (greedy CTC)."""
