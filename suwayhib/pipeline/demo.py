@@ -2,10 +2,10 @@
 """
 Suwayhib v6 -- the demo.
 
-    python code/demo.py                          # every recs/ item, in order
-    python code/demo.py --file Recording_4.m4a    # one specific item
-    python code/demo.py --speed 4                 # 4x realtime
-    python code/demo.py --play                    # also play the audio
+    python -m suwayhib.pipeline.demo                          # every recs/ item, in order
+    python -m suwayhib.pipeline.demo --file Recording_4.m4a    # one specific item
+    python -m suwayhib.pipeline.demo --speed 4                 # 4x realtime
+    python -m suwayhib.pipeline.demo --play                    # also play the audio
 
 WHAT THIS PROVES, AND WHAT IT DOES NOT
 -----------------------------------------
@@ -54,16 +54,13 @@ import sys
 import time
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+from ..core import phones as P
+from ..core import reftext as RT
+from . import decode as D
+from . import harness as H
+from . import score as S
+
 FRAMES_PER_SEC = 50
-
-
-def _load(name):
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(name, HERE / f"{name}.py")
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
 
 
 # --------------------------------------------------------------------------
@@ -149,7 +146,6 @@ def start_playback(path):
 
 def run_one(item, tau, dwell_cap, commit_lag, speed, redraw_every, play,
            use_color):
-    D = _load("decode")
     d, words_ph, logp = item
 
     proc = start_playback(d.get("_audio_path")) if play else None
@@ -217,11 +213,6 @@ def prepare_items(a):
     """Same construction as decode.py's prepare(), plus the raw audio
     path and the WORD TEXT (Arabic strings, for rendering) alongside the
     phone-id sequences decode.py needs."""
-    S = _load("score")
-    RT = _load("reftext")
-    P = _load("phones")
-    H = _load("harness")
-    D = _load("decode")
 
     scorer = S.LiveScorer(a.ckpt, a.device)
     rt = RT.RefText(a.text)

@@ -2,9 +2,9 @@
 """
 Suwayhib v6 -- streaming trainer over the full IqraEval corpus.
 
-    python code/train_stream.py stage1 --out runs/stream --hours 200
-    python code/train_stream.py stage2 --out runs/stream --init runs/stream/stage1_best.pt
-    python code/train_stream.py resume --out runs/stream
+    python -m suwayhib.train.train_stream stage1 --out runs/stream --hours 200
+    python -m suwayhib.train.train_stream stage2 --out runs/stream --init runs/stream/stage1_best.pt
+    python -m suwayhib.train.train_stream resume --out runs/stream
 
 WHY THIS EXISTS ALONGSIDE train.py
 -----------------------------------
@@ -129,17 +129,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-HERE = Path(__file__).resolve().parent
+from ..core import bootstrap as B
+from ..core import model as M
+from ..core import phones as P
+from ..core import reftext as RT
+from ..pipeline import extract as E
+
 SR = 16000
 FRAMES_PER_SEC = 50
-
-
-def _load(name):
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(name, HERE / f"{name}.py")
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
 
 
 # --------------------------------------------------------------------------
@@ -156,7 +153,6 @@ def build_vocab(extra_symbols=()):
     from our inventory would otherwise silently drop every item
     containing it.
     """
-    P = _load("phones")
     base = set(P.iqra_inventory()) | set(extra_symbols)
     syms = sorted(base)
     return {s: i + 1 for i, s in enumerate(syms)}
@@ -243,9 +239,6 @@ def stream_local(manifest, lib, text_path, audio_cache=None, max_items=None):
     its own; it has verified word TIMINGS, which is exactly the thing
     the streamed data lacks.
     """
-    B = _load("bootstrap")
-    P = _load("phones")
-    RT = _load("reftext")
     rt = RT.RefText(text_path)
     cache = None
     if audio_cache and (Path(audio_cache) / "index.json").exists():
@@ -531,8 +524,6 @@ def save_ckpt(path, model, opt, scaler, step, vocab, cfg, extra=None):
 
 
 def run_training(a, stage):
-    M = _load("model")
-    E = _load("extract")
     device = torch.device(a.device)
 
     extra = ()
@@ -684,8 +675,8 @@ def run_training(a, stage):
     print("NOTE: this trainer has no held-out val loop -- streaming makes")
     print("a clean split awkward and the honest evaluation for this")
     print("project lives elsewhere. Evaluate the checkpoint with:")
-    print("  python code/score.py testset --ckpt <ckpt> --by-error-type")
-    print("  python code/decode.py sweep --ckpt <ckpt> --source testset "
+    print("  python -m suwayhib.pipeline.score testset --ckpt <ckpt> --by-error-type")
+    print("  python -m suwayhib.pipeline.decode sweep --ckpt <ckpt> --source testset "
           "--split holdout")
     return 0
 

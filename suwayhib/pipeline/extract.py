@@ -2,9 +2,9 @@
 """
 Suwayhib v6 -- XLS-R feature extraction and caching.
 
-    python code/extract.py probe --out cache/probe --hours 2.5
-    python code/extract.py full  --out cache/feats --layers 14,15,16,17,18,19
-    python code/extract.py info  --cache cache/probe
+    python -m suwayhib.pipeline.extract probe --out cache/probe --hours 2.5
+    python -m suwayhib.pipeline.extract full  --out cache/feats --layers 14,15,16,17,18,19
+    python -m suwayhib.pipeline.extract info  --cache cache/probe
 
 WHY CACHE AT ALL
 ----------------
@@ -68,21 +68,14 @@ from pathlib import Path
 
 import numpy as np
 
-HERE = Path(__file__).resolve().parent
+from ..core import bootstrap as B
+
 SR = 16000
 MODEL = "facebook/wav2vec2-xls-r-300m"
 
 # XLS-R stride: 20ms per frame => 50 frames/sec.
 FRAME_MS = 20
 FRAMES_PER_SEC = 1000 // FRAME_MS
-
-
-def _load(name):
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(name, HERE / f"{name}.py")
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
 
 
 # --------------------------------------------------------------------------
@@ -159,7 +152,6 @@ def iter_reference_library(manifest, lib, cache_dir, limit_seconds=None):
     Uses bootstrap.py's AudioCache when present -- that cache already
     round-trip verified, so reading it costs no subprocesses.
     """
-    B = _load("bootstrap")
     rows = B.load_manifest(manifest)
     paths = sorted({r["audio_path"] for r in rows})
 

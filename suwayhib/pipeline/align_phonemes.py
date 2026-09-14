@@ -2,8 +2,8 @@
 """
 Suwayhib v6 -- derive the phones.py <-> IqraEval symbol correspondence.
 
-    python code/align_phonemes.py probe   --n 200
-    python code/align_phonemes.py derive  --n 2000 --out manifest/iqra_alias.json
+    python -m suwayhib.pipeline.align_phonemes probe   --n 200
+    python -m suwayhib.pipeline.align_phonemes derive  --n 2000 --out manifest/iqra_alias.json
 
 WHY THIS EXISTS
 ---------------
@@ -69,15 +69,7 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-
-
-def _load(name):
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(name, HERE / f"{name}.py")
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
+from ..core import phones as P
 
 
 # --------------------------------------------------------------------------
@@ -152,7 +144,6 @@ def iter_samples(n, split="train", dataset="IqraEval/Iqra_train"):
 
 def cmd_probe(a):
     """Eyeball a handful of alignments before trusting any aggregate."""
-    P = _load("phones")
     for k, (text, theirs) in enumerate(iter_samples(a.n)):
         ours = []
         for w in text.split():
@@ -172,7 +163,6 @@ def cmd_probe(a):
 
 
 def cmd_derive(a):
-    P = _load("phones")
     table = defaultdict(Counter)      # ours -> Counter(theirs)
     ours_total = Counter()
     theirs_total = Counter()

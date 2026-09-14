@@ -4,7 +4,7 @@ Suwayhib -- Step 3: synthetic error injection with artifact controls.
 
 Builds a labelled test set from verified reference recitations.
 
-    python injector.py build --manifest manifest_full.csv --lib reference_library \
+    python -m suwayhib.tools.injector build --manifest manifest_full.csv --lib reference_library \
         --out testset --n 2000 --seed 1
 
 WHY THE CONTROLS MATTER

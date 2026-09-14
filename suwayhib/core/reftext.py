@@ -2,8 +2,8 @@
 """
 Suwayhib v4 -- reference text preparation.
 
-    python reftext.py check --texts texts --device cuda
-    python reftext.py show 78 1
+    python -m suwayhib.core.reftext check --texts texts --device cuda
+    python -m suwayhib.core.reftext show 78 1
 
 THE THREE RULES  (all derived empirically, not assumed)
 -------------------------------------------------------

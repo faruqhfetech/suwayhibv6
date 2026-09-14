@@ -2,9 +2,9 @@
 """
 Suwayhib v6 -- Phase 3: the streaming decoder.
 
-    python code/decode.py selftest          # pure numpy, no model needed
-    python code/decode.py run --ckpt runs/head/best.pt
-    python code/decode.py sweep --ckpt runs/head/best.pt   # pick tau
+    python -m suwayhib.pipeline.decode selftest          # pure numpy, no model needed
+    python -m suwayhib.pipeline.decode run --ckpt runs/head/best.pt
+    python -m suwayhib.pipeline.decode sweep --ckpt runs/head/best.pt   # pick tau
 
 WHAT THIS DOES
 --------------
@@ -117,17 +117,13 @@ from pathlib import Path
 
 import numpy as np
 
-HERE = Path(__file__).resolve().parent
+from ..core import phones as P
+from ..core import reftext as RT
+from . import harness as H
+from . import score as S
+
 FRAMES_PER_SEC = 50
 NEG_INF = float("-inf")
-
-
-def _load(name):
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(name, HERE / f"{name}.py")
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
 
 
 # --------------------------------------------------------------------------
@@ -584,10 +580,6 @@ def frame_logp(scorer, audio):
 
 
 def prepare(a):
-    S = _load("score")
-    RT = _load("reftext")
-    P = _load("phones")
-    H = _load("harness")
     scorer = S.LiveScorer(a.ckpt, a.device)
     rt = RT.RefText(a.text)
     items = []
@@ -621,9 +613,6 @@ def prepare_testset(a):
     wants a finer per-error-type breakdown later; cmd_sweep's existing
     columns do not need them.
     """
-    S = _load("score")
-    RT = _load("reftext")
-    P = _load("phones")
     scorer = S.LiveScorer(a.ckpt, a.device)
     rt = RT.RefText(a.text)
 

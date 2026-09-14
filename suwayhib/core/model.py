@@ -2,8 +2,8 @@
 """
 Suwayhib v6 -- the phone head.
 
-    python code/model.py summary
-    python code/model.py parity        # streaming == full-context check
+    python -m suwayhib.core.model summary
+    python -m suwayhib.core.model parity        # streaming == full-context check
 
 WHAT THIS IS
 ------------
@@ -48,7 +48,7 @@ Two details that are easy to get wrong and expensive to debug:
   while real audio failed"). DCConv restricts the convolution to the same
   boundaries the attention mask uses.
 
-  PARITY MUST BE ASSERTED, NOT ASSUMED. `python model.py parity` checks
+  PARITY MUST BE ASSERTED, NOT ASSUMED. `python -m suwayhib.core.model parity` checks
   that feeding audio chunk-by-chunk with cached state gives the same
   output as feeding it whole. Run it on every architecture change. A
   cache bug here is silent and looks like a mediocre model.
@@ -69,22 +69,11 @@ import os
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-
-
-def _load(name):
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(name, HERE / f"{name}.py")
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
-
-
-# --------------------------------------------------------------------------
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from . import phones as P
 
 
 # --------------------------------------------------------------------------
@@ -368,7 +357,6 @@ def cmd_sizes(a):
     priors, so the head's budget is a fraction of the 3-4 MB total -- call
     it 1-2 MB at INT8, i.e. roughly 1-2 M parameters.
     """
-    P = _load("phones")
     n_phones = len(P.iqra_inventory())
     print(f"phones: {n_phones} (+1 blank)   layers: {a.n_layers}   "
           f"fusion: {a.fusion}\n")
@@ -395,7 +383,6 @@ def cmd_sizes(a):
 
 
 def cmd_summary(a):
-    P = _load("phones")
     # NOT len(PHONE_SET) + len(BACKED): that counts only the 33 base
     # symbols plus 6 backed vowels and silently omits the 27 consonant
     # geminates the iqra convention actually emits. Sizing the CTC output
@@ -427,7 +414,6 @@ def cmd_parity(a):
     wrong". Assert it on every architecture change.
     """
     torch.manual_seed(0)
-    P = _load("phones")
     n_phones = len(P.iqra_inventory())
     m = build(a, n_phones).eval()
 

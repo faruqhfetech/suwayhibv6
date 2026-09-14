@@ -2,9 +2,9 @@
 """
 Suwayhib v6 -- Gate 0: data verification and the fast audio cache.
 
-    python bootstrap.py verify      # all Gate 0 data checks
-    python bootstrap.py cache       # decode every ayah WAV once, memmap it
-    python bootstrap.py stats       # duration distributions from the manifest
+    python -m suwayhib.core.bootstrap verify      # all Gate 0 data checks
+    python -m suwayhib.core.bootstrap cache       # decode every ayah WAV once, memmap it
+    python -m suwayhib.core.bootstrap stats       # duration distributions from the manifest
 
 WHY THIS EXISTS
 ---------------
@@ -406,8 +406,8 @@ def cmd_clean(a):
         return 1
 
     print(f"\nwrote {out}")
-    print(f"NEXT: python bootstrap.py verify --manifest {out}")
-    print(f"      python bootstrap.py cache   --manifest {out}")
+    print(f"NEXT: python -m suwayhib.core.bootstrap verify --manifest {out}")
+    print(f"      python -m suwayhib.core.bootstrap cache   --manifest {out}")
     return 0
 
 

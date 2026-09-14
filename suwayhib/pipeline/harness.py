@@ -2,9 +2,9 @@
 """
 Suwayhib v6 -- streaming evaluation harness on recs/.
 
-    python code/harness.py selftest              # harness must FAIL a random stub
-    python code/harness.py run --model teacher_worst_token --device cpu
-    python code/harness.py run --model random --device cpu     # same as selftest
+    python -m suwayhib.pipeline.harness selftest              # harness must FAIL a random stub
+    python -m suwayhib.pipeline.harness run --model teacher_worst_token --device cpu
+    python -m suwayhib.pipeline.harness run --model random --device cpu     # same as selftest
 
 WHY THIS EXISTS, AND WHY IT COMES BEFORE ANY MODEL
 -----------------------------------------------------
@@ -68,14 +68,15 @@ A model for this harness is anything exposing:
 """
 
 import argparse
-import importlib.util
 import random
 import re
 import subprocess
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+from ..core import reftext as RT
+from ..core import textscore as TS
+
 SR = 16000
 
 # ---------------------------------------------------------------------
@@ -112,13 +113,6 @@ EXPECTED_STALL_WORD = {
     # Recording_1.m4a is kind="artifact" and must COMPLETE, so it has no
     # expected stall -- a stall there is the false positive being tracked.
 }
-
-
-def _load(name):
-    spec = importlib.util.spec_from_file_location(name, HERE / f"{name}.py")
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
 
 
 # --------------------------------------------------------------------------
@@ -254,7 +248,6 @@ class TeacherWorstToken:
     def __init__(self, model="whisper-base-quran",
                  text="texts/quran-simple-plain.txt", device="cpu",
                  threshold=0.10):
-        TS = _load("textscore")
         self.scorer = TS.TextScorer(model=model, text=text, device=device)
         self.threshold = threshold
         self._cache = {}
@@ -339,7 +332,6 @@ def walk(model, audio, words, surah, ayah, threshold=0.5, max_stall_checks=1):
 # --------------------------------------------------------------------------
 
 def evaluate(model, recs_dir, descriptions, ref_text_path, threshold, verbose):
-    RT = _load("reftext")
     rt = RT.RefText(ref_text_path)
 
     results = []

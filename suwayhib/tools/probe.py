@@ -2,8 +2,8 @@
 """
 Suwayhib v6 -- XLS-R layer probe.
 
-    python code/probe.py run --cache cache/probe
-    python code/probe.py labels --cache cache/probe --n 5
+    python -m suwayhib.tools.probe run --cache cache/probe
+    python -m suwayhib.tools.probe labels --cache cache/probe --n 5
 
 WHAT THIS ANSWERS
 -----------------
@@ -69,16 +69,11 @@ from pathlib import Path
 
 import numpy as np
 
-HERE = Path(__file__).resolve().parent
+from ..core import bootstrap as B
+from ..core import phones as P
+from ..pipeline import extract as E
+
 FRAMES_PER_SEC = 50
-
-
-def _load(name):
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(name, HERE / f"{name}.py")
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
 
 
 # --------------------------------------------------------------------------
@@ -91,8 +86,6 @@ def build_frame_labels(manifest, text_path, mode="phone", trim=1):
     cache_key matches extract.py's iter_reference_library convention:
         "ref/" + audio_path with "/" -> "__" and ".wav" stripped
     """
-    B = _load("bootstrap")
-    P = _load("phones")
 
     text, _ = P.load_words_for_g2p(text_path)
     rows = B.load_manifest(manifest)
@@ -223,7 +216,6 @@ def fit_probe(X, y, n_classes, seed=0, iters=200, val_frac=0.2):
 
 
 def cmd_run(a):
-    E = _load("extract")
     cache = E.FeatureCache(a.cache)
     per_key, names, skipped = build_frame_labels(
         a.manifest, a.text, mode=a.mode, trim=a.trim)
@@ -300,7 +292,6 @@ def cmd_run(a):
 def cmd_labels(a):
     """Print a few labelled items, to eyeball the frame mapping before
     trusting any probe number."""
-    P = _load("phones")
     per_key, names, skipped = build_frame_labels(
         a.manifest, a.text, mode=a.mode, trim=a.trim)
     print(f"classes: {len(names)}   skipped: {dict(skipped)}\n")

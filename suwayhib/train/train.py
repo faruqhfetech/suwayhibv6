@@ -2,9 +2,9 @@
 """
 Suwayhib v6 -- train the phone head.
 
-    python code/train.py labels --cache cache/feats --n 5
-    python code/train.py run --cache cache/feats --epochs 20
-    python code/train.py run --cache cache/feats,cache/feats_iqra \\
+    python -m suwayhib.train.train labels --cache cache/feats --n 5
+    python -m suwayhib.train.train run --cache cache/feats --epochs 20
+    python -m suwayhib.train.train run --cache cache/feats,cache/feats_iqra \\
         --dim 128 --blocks 8 --ff-mult 2 --epochs 30
 
 WHAT IS BEING TRAINED
@@ -74,16 +74,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-HERE = Path(__file__).resolve().parent
+from ..core import bootstrap as B
+from ..core import model as M
+from ..core import phones as P
+from ..pipeline import extract as E
+
 FRAMES_PER_SEC = 50
-
-
-def _load(name):
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(name, HERE / f"{name}.py")
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
 
 
 # --------------------------------------------------------------------------
@@ -95,8 +91,6 @@ def reference_labels(manifest, text_path, vocab):
 
     Sequence from our G2P; word-end frames from the verified manifest.
     """
-    B = _load("bootstrap")
-    P = _load("phones")
     text, _ = P.load_words_for_g2p(text_path)
     ayahs = B.group_ayahs(B.load_manifest(manifest))
 
@@ -354,9 +348,6 @@ def evaluate(model, loader, device, n_batches=None):
 
 
 def cmd_run(a):
-    M = _load("model")
-    P = _load("phones")
-    E = _load("extract")
 
     # DERIVED from actual G2P output over the whole corpus, not from a
     # hand-maintained constant. The first training attempt used
@@ -691,7 +682,6 @@ def cmd_lengths(a):
     guessed -- and if a meaningful fraction of items exceed it, the honest
     fix is a smaller batch rather than a smaller cap.
     """
-    E = _load("extract")
     caches = [E.FeatureCache(c) for c in a.cache.split(",")]
     lens = []
     for c in caches:
@@ -720,8 +710,6 @@ def cmd_lengths(a):
 
 def cmd_labels(a):
     """Inspect labels before training on them."""
-    P = _load("phones")
-    E = _load("extract")
     vocab = P.build_vocab_observed(a.text)
     ref, sk = reference_labels(a.manifest, a.text, vocab)
     print(f"reference items: {len(ref)}   skipped: {dict(sk)}")

@@ -2,9 +2,9 @@
 """
 Suwayhib v6 -- grapheme-to-phoneme.
 
-    python phones.py word "بِسْمِ"
-    python phones.py test  --text ../texts/quran-simple-plain.txt
-    python phones.py rate  --manifest ../manifest/manifest_clean.csv
+    python -m suwayhib.core.phones word "بِسْمِ"
+    python -m suwayhib.core.phones test  --text ../texts/quran-simple-plain.txt
+    python -m suwayhib.core.phones rate  --manifest ../manifest/manifest_clean.csv
 
 WHAT THIS IS, AND WHY IT IS NOT A PORT OF HALABI'S CODE
 ---------------------------------------------------------
@@ -98,22 +98,13 @@ rate, before a single frame of audio is trained on.
 """
 
 import argparse
-import importlib.util
 import json
 import re
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-
-
-def _load(name):
-    spec = importlib.util.spec_from_file_location(name, HERE / f"{name}.py")
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
-
+from . import reftext as RT
 
 # --------------------------------------------------------------------------
 # Buckwalter transliteration -- a standard, public scheme (LDC), not
@@ -768,7 +759,6 @@ def load_words_for_g2p(text_path):
 
     -> {(surah, ayah): "word word word"}, same shape as RefText.text
     """
-    RT = _load("reftext")
 
     def norm_keep_dagger(t):
         return re.sub(r"\s+", " ", t).strip()

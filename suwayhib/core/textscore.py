@@ -2,8 +2,8 @@
 """
 Suwayhib v4 -- forced-decoding scorer.
 
-    python textscore.py calibrate --device cuda      # sanity, not tuning
-    python textscore.py score --audio r.m4a --ref 78 9 --device cuda
+    python -m suwayhib.core.textscore calibrate --device cuda      # sanity, not tuning
+    python -m suwayhib.core.textscore score --audio r.m4a --ref 78 9 --device cuda
 
 WHAT THIS REPLACES
 ------------------
@@ -43,15 +43,15 @@ WHY worst-token AND NOT mean
 """
 
 import argparse
-import importlib.util
 import re
 import subprocess
 from pathlib import Path
 
 import numpy as np
 
+from . import reftext as _reftext_mod
+
 SR = 16000
-HERE = Path(__file__).resolve().parent
 
 MODELS = {
     "whisper-tiny-quran": "tarteel-ai/whisper-tiny-ar-quran",
@@ -60,10 +60,7 @@ MODELS = {
 
 
 def _reftext_module():
-    spec = importlib.util.spec_from_file_location("reftext", HERE / "reftext.py")
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
+    return _reftext_mod
 
 
 def load_audio(path):

@@ -1,0 +1,7 @@
+torch
+numpy
+transformers
+datasets
+scikit-learn
+
+# also required on PATH (not pip-installable): ffmpeg, ffplay

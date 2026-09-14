@@ -2,8 +2,8 @@
 """
 Suwayhib v6 -- score the trained phone head.
 
-    python code/score.py recs --ckpt runs/head/best.pt
-    python code/score.py testset --ckpt runs/head/best.pt   # inspects schema first
+    python -m suwayhib.pipeline.score recs --ckpt runs/head/best.pt
+    python -m suwayhib.pipeline.score testset --ckpt runs/head/best.pt   # inspects schema first
 
 WHY THIS EXISTS, AND WHY IT IS NOT A QuranMB.v2 SCORER
 ---------------------------------------------------------
@@ -58,16 +58,14 @@ from pathlib import Path
 import numpy as np
 import torch
 
-HERE = Path(__file__).resolve().parent
+from ..core import model as M
+from ..core import phones as P
+from ..core import reftext as RT
+from . import align_phonemes as AP
+from . import extract as E
+from . import harness as H
+
 SR = 16000
-
-
-def _load(name):
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(name, HERE / f"{name}.py")
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
 
 
 # --------------------------------------------------------------------------
@@ -75,7 +73,6 @@ def _load(name):
 # --------------------------------------------------------------------------
 
 def load_checkpoint(path, device):
-    M = _load("model")
     ck = torch.load(path, map_location=device, weights_only=False)
     cfg = ck["config"]
     model = M.PhoneHead(
@@ -101,7 +98,6 @@ class LiveScorer:
         self.device = torch.device(device)
         self.model, self.vocab, self.inv, self.cfg = load_checkpoint(
             ckpt_path, self.device)
-        E = _load("extract")
         self.enc = E.Encoder(device=device, fp16=(self.device.type == "cuda"))
         self.layers = self.cfg["layers"]
 
@@ -143,7 +139,6 @@ def correct_rate_and_accuracy(truth, pred):
     counterpart) count against accuracy but not correct_rate, matching
     their metric.py precisely.
     """
-    AP = _load("align_phonemes")
     pairs = AP.align(truth, pred)
     D = sum(1 for t, p in pairs if t is not None and p is None)
     ins = sum(1 for t, p in pairs if t is None and p is not None)
@@ -170,9 +165,6 @@ def load_audio(path):
 
 
 def cmd_recs(a):
-    H = _load("harness")
-    P = _load("phones")
-    RT = _load("reftext")
 
     scorer = LiveScorer(a.ckpt, a.device)
     rt = RT.RefText(a.text)
@@ -270,8 +262,6 @@ def cmd_testset(a):
     inflated by the reciter having been seen, even if this exact ayah/
     corruption was not.
     """
-    P = _load("phones")
-    RT = _load("reftext")
 
     scorer = LiveScorer(a.ckpt, a.device)
     rt = RT.RefText(a.text)
@@ -297,7 +287,6 @@ def cmd_testset(a):
         pred = scorer.phones(audio)
         _, _, D, S, I, C, n = correct_rate_and_accuracy(canon, pred)
 
-        AP = _load("align_phonemes")
         pairs = AP.align(canon, pred)
         # map each canon-side error position back to a word index, so
         # "flagged at word_idx" can be checked against ground truth
@@ -437,7 +426,6 @@ def cmd_submit(a):
     """
     import csv
     import json as _json
-    E = _load("extract")
     cache = E.FeatureCache(a.cache)
     model, vocab, inv, cfg = load_checkpoint(a.ckpt, torch.device(a.device))
     device = torch.device(a.device)
