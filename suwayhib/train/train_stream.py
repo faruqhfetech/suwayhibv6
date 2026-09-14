@@ -277,8 +277,17 @@ def _fetch_everyayah(path, cache_dir=None, timeout=30):
     return wav
 
 
+def local_ayah_keys(manifest):
+    """-> sorted list of (reciter, surah, ayah) keys in the local
+    manifest, in the SAME deterministic order stream_local iterates
+    them. This is the basis for a fixed, leakage-free train/validation
+    split of the local reference library -- see run_training's
+    val_keys, which takes the LAST --val-items of this list."""
+    return sorted(B.group_ayahs(B.load_manifest(manifest)).keys())
+
+
 def stream_local(manifest, lib, text_path, audio_cache=None, max_items=None,
-                 everyayah_cache=None):
+                 everyayah_cache=None, include_keys=None, exclude_keys=None):
     """Yield reference-library items WITH word-end frames.
 
     This is the only source of boundary supervision -- see the module
@@ -296,6 +305,12 @@ def stream_local(manifest, lib, text_path, audio_cache=None, max_items=None,
     audio is present locally (a dev machine that has it) or absent
     (a fresh Kaggle clone that only has the tracked manifest +
     timings) -- nothing needs to know which situation it's in.
+
+    include_keys/exclude_keys: mutually exclusive (reciter, surah,
+    ayah) filters, used to carve the local library into a training
+    stream (exclude_keys=val_keys, so validation items never train the
+    model) and a fixed validation set (include_keys=val_keys, called
+    once to materialise it -- see run_training).
     """
     rt = RT.RefText(text_path)
     cache = None
@@ -304,9 +319,14 @@ def stream_local(manifest, lib, text_path, audio_cache=None, max_items=None,
 
     ayahs = B.group_ayahs(B.load_manifest(manifest))
     n = 0
-    for (rec, surah, ayah), words in sorted(ayahs.items()):
+    for key, words in sorted(ayahs.items()):
+        if include_keys is not None and key not in include_keys:
+            continue
+        if exclude_keys is not None and key in exclude_keys:
+            continue
         if max_items and n >= max_items:
             return
+        rec, surah, ayah = key
         toks = rt.words(surah, ayah)
         if len(toks) != len(words):
             continue
@@ -491,6 +511,41 @@ def boundary_loss(pred, target, mask, pos_weight):
     return (l * mask).sum() / mask.sum().clamp(min=1)
 
 
+def compute_val_loss(model, enc, val_items, layers, device, max_frames,
+                     lam_bnd, pos_weight, no_boundary):
+    """CTC + boundary loss (mean, same formula as training) over a
+    FIXED, held-out slice of local reference-library items that never
+    enter the training stream (see run_training's val_keys / build_
+    streams' exclude_keys). This is the "best" tracking signal this
+    trainer previously had none of -- deliberately narrow (local
+    reference-library items only, since that's the one source with
+    real word-level ground truth available to hold out at all; the
+    streamed HF sources have no fixed, re-drawable validation slice by
+    construction) rather than absent.
+
+    Runs the WHOLE val_items list as one batch -- val_items is small by
+    design (--val-items, default 64) specifically so this is cheap
+    enough to run at every checkpoint interval without meaningfully
+    slowing the run down.
+    """
+    if not val_items:
+        return None
+    model.eval()
+    with torch.no_grad():
+        b = encode_batch(enc, val_items, layers, device, max_frames)
+        x = b["x"].to(device)
+        out = model(x, chunk=None, left_chunks=-1)  # full context, matches
+        # sample_chunk(training=False, ...)'s own (None, -1) return
+        lc = ctc_loss(out["logits"], b["lens"], b["seq"], b["slens"])
+        lb = torch.zeros((), device=device)
+        if not no_boundary and out.get("boundary") is not None:
+            lb = boundary_loss(out["boundary"], b["bnd"].to(device),
+                               b["bnd_mask"].to(device), pos_weight)
+        val = float(lc.item() + lam_bnd * float(lb.item()))
+    model.train()
+    return val
+
+
 def spec_augment(x, lens, bnd_mask, n_time=2, time_frac=0.05,
                  n_feat=2, feat_width=16, rng=None):
     """SpecAugment with one project-specific constraint.
@@ -551,7 +606,7 @@ def tristage_lr(step, total, peak, warm=0.10, hold=0.40, final_scale=0.05):
 # training
 # --------------------------------------------------------------------------
 
-def build_streams(a, vocab, stage):
+def build_streams(a, vocab, stage, val_keys=None):
     """-> (list of generators, list of weights)"""
     streams, weights = [], []
 
@@ -583,7 +638,8 @@ def build_streams(a, vocab, stage):
         # cycle()'s docstring for the measurement that caught this.
         streams.append(cycle(
             lambda: stream_local(a.manifest, a.lib, a.text, a.audio_cache,
-                                 everyayah_cache=a.everyayah_cache)))
+                                 everyayah_cache=a.everyayah_cache,
+                                 exclude_keys=val_keys)))
         weights.append(a.local_ratio)
 
     return streams, weights
@@ -617,6 +673,41 @@ def save_ckpt(path, model, opt, scaler, step, vocab, cfg, extra=None):
     torch.save({"model": model.state_dict(), "opt": opt.state_dict(),
                 "scaler": scaler.state_dict(), "step": step,
                 "vocab": vocab, "config": cfg, **(extra or {})}, path)
+
+
+def _checkpoint(a, stage, out_dir, resume_path, model, opt, scaler, step,
+                vocab, cfg, verify_head, enc, val_prepared, device,
+                best_val, final=False):
+    """Compute val loss (if there's a held-out slice to compute it on),
+    always overwrite resume.pt/stage{stage}_last.pt, and additionally
+    write stage{stage}_best.pt whenever val loss improves -- this is
+    the "save both last and best, auto-resume from last" pattern:
+    -> best_val (unchanged if no val slice or no improvement this call,
+    so the caller always has the correct running value to pass back in
+    next time, across resumes too).
+    """
+    val = compute_val_loss(model, enc, val_prepared, a.layers, device,
+                           a.max_frames, a.lam_bnd, a.pos_weight,
+                           a.no_boundary)
+    improved = val is not None and val < best_val
+    if improved:
+        best_val = val
+
+    vh_state = {"best_val": best_val}
+    if verify_head is not None:
+        vh_state["verify_head"] = verify_head.state_dict()
+    save_ckpt(resume_path, model, opt, scaler, step, vocab, cfg, vh_state)
+    save_ckpt(out_dir / f"stage{stage}_last.pt", model, opt, scaler, step,
+              vocab, cfg, vh_state)
+    if improved:
+        save_ckpt(out_dir / f"stage{stage}_best.pt", model, opt, scaler,
+                  step, vocab, cfg, {**vh_state, "val": val})
+
+    if not final:
+        val_str = (f"  val {val:.4f} (best {best_val:.4f})"
+                  if val is not None else "")
+        print(f"  checkpointed at step {step}{val_str}", flush=True)
+    return best_val
 
 
 def run_training(a, stage):
@@ -659,6 +750,7 @@ def run_training(a, stage):
         ck = torch.load(a.init, map_location=device, weights_only=False)
         model.load_state_dict(ck["model"])
         print(f"initialised from {a.init} (step {ck.get('step', '?')})")
+    best_val = float("inf")
     if a.resume and resume_path.exists():
         ck = torch.load(resume_path, map_location=device,
                         weights_only=False)
@@ -666,9 +758,16 @@ def run_training(a, stage):
         opt.load_state_dict(ck["opt"])
         scaler.load_state_dict(ck["scaler"])
         start_step = ck["step"]
+        # best_val MUST come back from the checkpoint, not reset to inf:
+        # otherwise the very next checkpoint interval after a resume
+        # would treat whatever val loss it sees as automatically "best"
+        # and overwrite a genuinely better stage{stage}_best.pt from
+        # before the interruption.
+        best_val = ck.get("best_val", float("inf"))
         if verify_head is not None and ck.get("verify_head"):
             verify_head.load_state_dict(ck["verify_head"])
-        print(f"resumed from {resume_path} at step {start_step}")
+        print(f"resumed from {resume_path} at step {start_step} "
+              f"(best_val so far: {best_val:.4f})")
 
     print(f"\nstage      : {stage}")
     print(f"vocab      : {n_phones} phones + blank")
@@ -685,9 +784,26 @@ def run_training(a, stage):
               f"itself (not a post-hoc classifier, see phase1.py for that)")
     else:
         print(f"verify     : off (--verify-loss to enable)")
-    print(f"schedule   : tri-stage, peak {a.lr}, {a.total_steps} steps\n")
+    # VALIDATION SPLIT. The last a.val_items local-library keys (sorted,
+    # deterministic) are held out of TRAINING entirely (exclude_keys
+    # below) and materialised ONCE here as a fixed set never re-drawn
+    # or reshuffled -- "best" must be measured against the SAME items
+    # every time, or a lucky/unlucky draw could look like real
+    # progress. Only possible when the local library is actually in
+    # use; streamed HF sources have no such fixed slice to hold out.
+    val_keys, val_prepared = None, []
+    if a.local_ratio > 0 and Path(a.manifest).exists() and a.val_items > 0:
+        keys = local_ayah_keys(a.manifest)
+        val_keys = set(keys[-a.val_items:]) if keys else set()
+        val_raw = stream_local(a.manifest, a.lib, a.text, a.audio_cache,
+                               everyayah_cache=a.everyayah_cache,
+                               include_keys=val_keys)
+        val_prepared = [x for x in (prepare_item(i, vocab) for i in val_raw)
+                        if x]
+        print(f"validation : {len(val_prepared)} held-out local items "
+              f"(never trained on)\n")
 
-    streams, weights = build_streams(a, vocab, stage)
+    streams, weights = build_streams(a, vocab, stage, val_keys=val_keys)
     src = interleave(streams, weights, seed=a.seed)
     src = (x for x in (prepare_item(i, vocab) for i in src) if x)
     batcher = BucketBatcher(src, a.batch, a.pool_batches, seed=a.seed)
@@ -696,7 +812,6 @@ def run_training(a, stage):
     step = start_step
     t0 = time.time()
     run_ctc, run_bnd, run_verify, nb = 0.0, 0.0, 0.0, 0
-    best = float("inf")
     deadline = t0 + a.max_hours_wall * 3600 if a.max_hours_wall else None
 
     for batch in batcher:
@@ -789,30 +904,25 @@ def run_training(a, stage):
                   flush=True)
             run_ctc, run_bnd, run_verify, nb = 0.0, 0.0, 0.0, 0
 
-        vh_state = ({"verify_head": verify_head.state_dict()}
-                   if verify_head is not None else None)
         if step % a.ckpt_every == 0:
-            save_ckpt(resume_path, model, opt, scaler, step, vocab, cfg,
-                      vh_state)
-            save_ckpt(out_dir / f"stage{stage}_last.pt", model, opt,
-                      scaler, step, vocab, cfg, vh_state)
-            # free anything the last window left behind before the next
-            # one allocates; on a memory-constrained box this was the
-            # difference between finishing and an OOM kill
+            best_val = _checkpoint(a, stage, out_dir, resume_path, model,
+                                   opt, scaler, step, vocab, cfg,
+                                   verify_head, enc, val_prepared, device,
+                                   best_val)
             gc.collect()
             if device.type == "cuda":
                 torch.cuda.empty_cache()
-            print(f"  checkpointed at step {step}", flush=True)
 
-    vh_state = ({"verify_head": verify_head.state_dict()}
-               if verify_head is not None else None)
-    save_ckpt(resume_path, model, opt, scaler, step, vocab, cfg, vh_state)
-    save_ckpt(out_dir / f"stage{stage}_last.pt", model, opt, scaler, step,
-              vocab, cfg, vh_state)
-    print(f"\nstopped at step {step} -> {out_dir}/stage{stage}_last.pt")
-    print("NOTE: this trainer has no held-out val loop -- streaming makes")
-    print("a clean split awkward and the honest evaluation for this")
-    print("project lives elsewhere. Evaluate the checkpoint with:")
+    best_val = _checkpoint(a, stage, out_dir, resume_path, model, opt,
+                           scaler, step, vocab, cfg, verify_head, enc,
+                           val_prepared, device, best_val, final=True)
+    print(f"\nstopped at step {step} -> {out_dir}/stage{stage}_last.pt"
+          f"{f' (best: {out_dir}/stage{stage}_best.pt, val {best_val:.4f})' if val_prepared else ''}")
+    print("NOTE: val loss above is CTC+boundary on a small (--val-items)")
+    print("held-out slice of the LOCAL reference library only -- streamed")
+    print("HF sources have no fixed slice to hold out. Useful for picking")
+    print("a checkpoint across a long run, but the honest, full evaluation")
+    print("for this project still lives elsewhere:")
     print("  python -m suwayhib.pipeline.score testset --ckpt <ckpt> --by-error-type")
     print("  python -m suwayhib.pipeline.decode sweep --ckpt <ckpt> --source testset "
           "--split holdout")
@@ -888,6 +998,13 @@ def add_common(p):
                         "supervision -- streamed HF data has none. Set 0 "
                         "to disable, which silently disables the boundary "
                         "head's learning signal too.")
+    p.add_argument("--val-items", type=int, default=64,
+                   help="local-library items held out of TRAINING "
+                        "entirely and used as a fixed validation slice "
+                        "at every --ckpt-every, so stage{N}_best.pt "
+                        "means something -- see compute_val_loss. Set "
+                        "0 to disable (only stage{N}_last.pt is saved, "
+                        "as before this existed).")
     p.add_argument("--manifest", default="manifest/manifest_clean.csv")
     p.add_argument("--lib", default="reference_library")
     p.add_argument("--text", default="texts/quran-simple-plain.txt")
