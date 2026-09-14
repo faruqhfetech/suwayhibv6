@@ -793,6 +793,46 @@ def spec_augment(x, lens, bnd_mask, n_time=2, time_frac=0.05,
     return x, bnd_mask
 
 
+# Parameters that train DURING head-only warmup.
+#
+# "out." is the phone (CTC) projection -- the original allowlist, and the
+# one the warmup rationale is actually about: CTC collapses to all-blank
+# if the classifier is still random when the trunk starts moving.
+#
+# "boundary." was previously NOT here, so the boundary head sat frozen
+# for the whole warmup window. That was incidental rather than intended:
+# the blank-collapse argument is specific to CTC and says nothing about a
+# per-frame binary head, so freezing it bought no stability and cost real
+# training steps. Warming both heads on a still-frozen trunk is also the
+# ordinary linear-probe-then-finetune recipe, which is what this schedule
+# already is.
+WARMUP_TRAIN_PREFIXES = ("out.", "boundary.")
+
+
+def split_warmup_params(raw_model, raw_verify_head):
+    """-> (warm_params, frozen_params) for the two optimizer groups.
+
+    raw_* (unwrapped) DELIBERATELY: under DDP the wrapped module prefixes
+    every name with "module.", so matching on "out." against the wrapper
+    would match NOTHING and put every parameter in the frozen group.
+    The wrapped and unwrapped modules share the same tensors, so
+    splitting by the unwrapped names still builds groups the optimizer
+    and DDP both agree about.
+
+    The verification head goes in `warm`: it is a separate module that
+    the previous warmup code never touched (it iterated only
+    raw_model.named_parameters()), so keeping it always-updated
+    preserves that behaviour exactly rather than silently freezing
+    something as a side effect of this change.
+    """
+    warm, frozen = [], []
+    for n_, p_ in raw_model.named_parameters():
+        (warm if n_.startswith(WARMUP_TRAIN_PREFIXES) else frozen).append(p_)
+    if raw_verify_head is not None:
+        warm += list(raw_verify_head.parameters())
+    return warm, frozen
+
+
 def effective_warmup_head(warmup_head, total_steps, frac):
     """-> how many steps head-only warmup actually lasts.
 
@@ -1173,11 +1213,38 @@ def run_training(a, stage):
             verify_head = torch.nn.parallel.DistributedDataParallel(
                 raw_verify_head, device_ids=[local_rank])
 
-    params = list(model.parameters())
-    if verify_head is not None:
-        params += list(verify_head.parameters())
+    # TWO PARAMETER GROUPS, so head-only warmup can be a REAL freeze.
+    #
+    # The previous implementation zeroed the frozen parameters' .grad
+    # after backward. That stops the gradient term but NOT AdamW's
+    # decoupled weight decay, which multiplies every parameter by
+    # (1 - lr*wd) on every step whether or not it has a gradient.
+    # Measured: 200 steps at lr 3e-4, wd 0.01 with an identically-zero
+    # gradient still shrinks a parameter by ~0.06%. On the 200-step smoke
+    # run that produced a val boundary loss falling 1.19 -> 1.09 with the
+    # head supposedly frozen -- decay flattening the head's logits toward
+    # its bias, which reads exactly like learning and is not.
+    #
+    # The obvious fix, requires_grad_(False) during warmup, is NOT usable
+    # here: DDP fixes its gradient-reduction plan on the first iteration
+    # and expects the same participating parameters every time after.
+    # Verified at world_size=2 on gloo -- flipping requires_grad mid-run
+    # raises "Expected to have finished reduction in the prior iteration
+    # before starting a new one". (world_size=1 does NOT reproduce it,
+    # so a single-GPU test would have passed and shipped the bug.)
+    #
+    # Setting lr=0 AND weight_decay=0 on the frozen group is equivalent
+    # and DDP-safe: every parameter still requires grad and still takes
+    # part in reduction, so the plan never changes, while AdamW's whole
+    # update (both the Adam term and the decay term, each scaled by lr)
+    # is exactly zero.
+    warm_params, frozen_params = split_warmup_params(raw_model,
+                                                     raw_verify_head)
     start_step = 0
-    opt = torch.optim.AdamW(params, lr=a.lr, weight_decay=a.weight_decay)
+    opt = torch.optim.AdamW(
+        [{"name": "warm", "params": warm_params},
+         {"name": "frozen", "params": frozen_params}],
+        lr=a.lr, weight_decay=a.weight_decay)
     scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
     out_dir = Path(a.out)
@@ -1205,7 +1272,20 @@ def run_training(a, stage):
         ck = torch.load(resume_path, map_location=device,
                         weights_only=False)
         raw_model.load_state_dict(ck["model"])
-        opt.load_state_dict(ck["opt"])
+        try:
+            opt.load_state_dict(ck["opt"])
+        except ValueError as e:
+            # A checkpoint written before the two-group split has a
+            # single parameter group and cannot be loaded into a
+            # two-group optimizer. The model weights above are the part
+            # that matters; Adam moments re-estimate within a few dozen
+            # steps. Loud rather than silent -- a resumed run that
+            # quietly lost its optimizer state should say so.
+            if is_main:
+                print(f"WARNING: optimizer state not restored ({e}). This "
+                      f"checkpoint predates the warmup param-group split; "
+                      f"model weights and step count ARE restored, Adam "
+                      f"moments restart.")
         scaler.load_state_dict(ck["scaler"])
         start_step = ck["step"]
         # best_sel MUST come back from the checkpoint, not reset:
@@ -1252,9 +1332,11 @@ def run_training(a, stage):
                       f"  (capped from {a.warmup_head} by "
                       f"--warmup-head-frac {a.warmup_head_frac:g} of "
                       f"{a.total_steps})")
-            print(f"warmup     : head-only for the first {warmup_head} of "
-                  f"{a.total_steps} steps -- ONLY out.weight/out.bias "
-                  f"train until then{capped}")
+            print(f"warmup     : heads-only for the first {warmup_head} "
+                  f"of {a.total_steps} steps -- only "
+                  f"{'/'.join(x.rstrip('.') for x in WARMUP_TRAIN_PREFIXES)}"
+                  f"* train until then (trunk lr 0, weight_decay 0 -- a "
+                  f"real freeze, not just zeroed grads){capped}")
         else:
             print(f"warmup     : none -- the whole model trains from step 0")
         print(f"boundary   : lambda {a.lam_bnd}, supervised only by local "
@@ -1359,6 +1441,17 @@ def run_training(a, stage):
         lr = tristage_lr(step, a.total_steps, a.lr)
         for g in opt.param_groups:
             g["lr"] = lr
+        # HEAD-ONLY WARMUP, applied AFTER the scheduler so it wins: the
+        # frozen group gets lr 0 and weight_decay 0, which makes AdamW's
+        # update identically zero for it (see the param-group comment at
+        # construction for why this rather than requires_grad_(False)).
+        for g in opt.param_groups:
+            if g.get("name") == "frozen":
+                if step < warmup_head:
+                    g["lr"] = 0.0
+                    g["weight_decay"] = 0.0
+                else:
+                    g["weight_decay"] = a.weight_decay
 
         b = encode_batch(enc, batch, a.layers, device, a.max_frames)
         bx, bnd_mask = b["x"], b["bnd_mask"]
@@ -1430,15 +1523,18 @@ def run_training(a, stage):
         opt.zero_grad(set_to_none=True)
         scaler.scale(loss).backward()
         scaler.unscale_(opt)
-        # HEAD-ONLY WARMUP: for the first --warmup-head steps, zero the
-        # gradient of everything except the output projection. CTC on a
-        # freshly-initialised head is prone to collapsing to all-blank
-        # early; letting the classifier settle first is standard, cheap
-        # insurance against losing the first hour of a long run.
+        # The actual freeze is the lr=0/weight_decay=0 on the "frozen"
+        # param group above; this zeroing is now only about CLIPPING.
+        # clip_grad_norm_ below measures the norm over every parameter it
+        # is handed, so leaving the trunk's (large, early-training)
+        # gradients in place would scale the warm heads' updates down by
+        # a factor that has nothing to do with them -- changing the
+        # warmup dynamics this schedule was tuned with. Zeroing keeps the
+        # clip measuring only what is actually being updated.
         #
         # raw_model.named_parameters() DELIBERATELY, not model's: under
         # DDP, model (the wrapped object) prefixes every name with
-        # "module." (e.g. "module.out.weight"), so `n_.startswith("out.")`
+        # "module." (e.g. "module.out.weight"), so matching on "out."
         # would silently match NOTHING and zero every parameter's
         # gradient including the output layer's -- found by tracing
         # through DDP's own naming convention, not by seeing it fail.
@@ -1447,7 +1543,7 @@ def run_training(a, stage):
         # correctly zeroes the gradients DDP will reduce.
         if step < warmup_head:
             for n_, p_ in raw_model.named_parameters():
-                if not n_.startswith("out."):
+                if not n_.startswith(WARMUP_TRAIN_PREFIXES):
                     if p_.grad is not None:
                         p_.grad.zero_()
         clip_params = list(model.parameters())
